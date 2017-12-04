@@ -1,0 +1,726 @@
+include "gbhw.inc"	; wealth of gameboy hardware & addresses info
+
+;-------------- INTERRUPT VECTORS ------------------------
+; specific memory addresses are called when a hardware interrupt triggers
+
+; Vertical-blank triggers each time the screen finishes drawing. Draw-To-Screen
+; routines happen here because Video-RAM is only available during vblank*
+SECTION "Vblank", ROM0[$0040]
+	reti
+
+; LCDC interrupts are LCD-specific interrupts (not including vblank) such as
+; interrupting when the gameboy draws a specific horizontal line on-screen
+SECTION "LCDC", ROM0[$0048]
+	reti
+
+; Timer interrupt is triggered when the timer, rTIMA, ($FF05) overflows.
+; rDIV, rTIMA, rTMA, rTAC all control the timer.
+SECTION "Timer", ROM0[$0050]
+	reti
+
+; Serial interrupt occurs after the gameboy transfers a byte through the
+; gameboy link cable.
+SECTION "Serial", ROM0[$0058]
+	reti
+
+; Joypad interrupt occurs after a button has been pressed. Usually we don't
+; enable this, and instead poll the joypad state each vblank
+SECTION "Joypad", ROM0[$0060]
+	reti
+;----------- END INTERRUPT VECTORS -------------------
+; QUESTION TO STUDENT -- How many bytes separate each interrupt vector?
+
+
+SECTION "ROM_entry_point", ROM0[$0100]	; ROM is given control from boot here
+	nop
+	jp	code_begins
+
+
+;------------- BEGIN ROM HEADER ----------------
+; The gameboy reads this info (before handing control over to ROM)
+;* macro calls (such as NINTENDO_LOGO) MUST be indented to run
+SECTION "rom header", ROM0[$0104]
+	NINTENDO_LOGO	; add nintendo logo. Required to run on real hardware
+	ROM_HEADER	"0123456789ABCDE"
+
+include "dma.inc"
+include "vars.asm"
+include "syntax.inc"
+include "debug.inc"
+
+	var_HighRamByte	TIMER_DELAY
+	var_HighRamByte	TIMER_SOUND
+	var_HighRamByte	KEY.ACTIVE
+	var_HighRamByte	REG.0
+	var_HighRamByte	REG.1
+	var_HighRamByte	REG.2
+	var_HighRamByte	REG.3
+	var_HighRamByte	REG.4
+	var_HighRamByte	REG.5
+	var_HighRamByte	REG.6
+	var_HighRamByte	REG.7
+	var_HighRamByte	REG.8
+	var_HighRamByte	REG.9
+	var_HighRamByte	REG.A
+	var_HighRamByte	REG.B
+	var_HighRamByte	REG.C
+	var_HighRamByte	REG.D
+	var_HighRamByte	REG.E
+	var_HighRamByte	REG.F	; carry Flag register. Set if sprites collide
+	var_HighRamByte	REG.I	; index register is 16-bit
+	var_HighRamByte	REG.I_LSB
+	var_HighRamByte	REG.PC		; PC is 16-bit
+	var_HighRamByte	REG.PC_LSB
+	var_HighRamByte	REG.SP		; SP is 16-bit
+	var_HighRamByte	REG.SP_LSB
+
+CHIP8_ROM = $D000	; 4KB of memory for chip8 ram: $D000 - $E000
+CHIP8_GFX = $D000	; $D000-$D200 (512bytes) are reserved for fonts/gfx
+
+; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
+; the screen to 128x64. It's still small, but at least it'll look better
+
+
+; In a nutshell there are two registers: the “sound timer” and “delay timer”.
+; Each of these is decremented sixty times per second whenever they are
+; non-zero.
+; ---
+; The delay timer has no special behavior beyond this, but ROMs can read its
+; value and use it as a real-time clock.
+; ---
+; The sound timer cannot be read by ROMs, only written. Whenever its value is
+; positive the CHIP-8’s buzzer will sound. That’s the extent of the CHIP-8’s
+; sound: one buzzer that’s either on or off.
+
+; safe to include other files here. INCLUDE'd files often immediately add more
+; code to the compiled ROM. It's critical that your code does not step over
+; the first $0000 - $014E bytes
+
+lda_register: MACRO
+; load Chip8 register value into A
+; C will hold pointer to required register
+	ld	c, LOW(\1)
+	ld	a, [c]
+	ENDM
+
+; run twice the following command
+x2: MACRO
+	IF _NARG == 1
+	\1
+	\1
+	ENDC
+	IF _NARG == 2
+	\1, \2
+	\1, \2
+	ENDC
+	IF _NARG == 3
+	\1, \2, \3
+	\1, \2, \3
+	ENDC
+	ENDM
+
+; load register pair (I, PC, SP) into HL
+; uses A, HL
+load_rpair_into_hl: MACRO
+	ld	hl, \1
+	ldi	a, [hl]	; get MSB of register-pair
+	ld	l, [hl]	; get LSB of register-pair
+	ld	h, a
+	ENDM
+
+; store register pair (I, PC, SP) from HL into ram
+; uses A, C, HL
+; 9 Cycles. Just as fast as re-using HL as pointer
+store_rpair_from_hl: MACRO
+	ld	c, LOW(\1)
+	ld	a, h
+	ld	[$FF00+c], a	; store MSB of register-pair
+	inc	c
+	ld	a, l
+	ld	[$FF00+c], a	; store LSB of register-pair
+	ENDM
+	
+
+; pushes chip8's PC onto chip8's stack.
+; SP += 2
+; uses A, BC, DE, HL
+; trashes chip8's PC from registers (be sure that in-ram value is valid)
+push_pc_to_chip8_stack: MACRO
+	ldpair	de, hl	; load PC into DE
+	load_rpair_into_hl	REG.SP
+	inc	hl	; stack mimic's gameboy's: move before write
+	ld	[hl], d	; store big-endian: MSB first
+	inc	hl
+	ld	[hl], e	; store LSB second
+	; at this point, BC is overwritten, losing chip8's PC
+	; we should push bc, then pop hl to restore PC. But we assume that
+	; PC is going to be overwritten since this routine is only called
+	; just before a CALL 0NNN function
+	store_rpair_from_hl	REG.SP
+	ENDM
+
+; "pops" PC from chip8's stack into HL
+; SP -= 2
+; PC = restored address from stack
+; uses A, BC, HL
+pop_pc_from_chip8_stack: MACRO
+	load_rpair_into_hl	REG.SP
+	ld	c, [hl]	; read LSB first
+	dec	hl	; SP -= 1
+	ld	b, [hl]
+	dec	hl	; SP -= 2
+	push	bc
+	store_rpair_from_hl	REG.SP
+	pop	hl	; HL is now restored PC
+	ENDM
+
+
+code_begins:
+	di	; disable interrupts
+	ld	SP, $FFFF	; set stack to top of HRAM
+.loop
+	halt	; halts cpu until interrupt triggers
+	nop
+	jp	.loop
+
+chip8_not_implemented:
+	bug_break	"function not implemented"
+	jp	chip8.decode_opcode
+.pop_pc
+	pop	hl	; pop PC into hl
+	jp	chip8_not_implemented
+
+
+chip8:
+; all chip8 logic-flow are coded below
+; in general, HL contains chip8's PC. Do not expect the REG.PC to be up-to-date
+; as such, most routines should jp chip8.decode_opcode after completing their
+; instruction
+.load_pc
+	load_rpair_into_hl	REG.PC
+	jr	.decode_opcode
+.pop_pc
+	pop	hl	; fxn calls this if they pushed PC before jumping here
+.decode_opcode
+; assume that [HL] points to next ROM location. AKA HL is the chip8's PC.
+; Bytes are stored big-endian so we load MSB first, and compare to determine
+; which instruction to run
+	ldi	a, [HL]	; HL will point to LSB of opcode
+	ifa	>=, HIGH($9000),	jp .decode_9xxx_or_more
+.decode_8xxx_or_less
+	ifa	<=, HIGH($00EE),	jp .decode_00xx
+	ifa	<=, HIGH($0FFF),	jp chip8_call_RC1802
+	ifa	<=, HIGH($1FFF),	jp chip8_1NNN_jump
+	ifa	<=, HIGH($2FFF),	jp chip8_call
+	ifa	<=, HIGH($3FFF),	jp chip8_3XNN_skip_if_vx_eq_nn
+	ifa	<=, HIGH($4FFF),	jp chip8_4XNN_skip_if_vx_not_eq_nn
+	ifa	<=, HIGH($5FFF),	jp chip8_5XY0_skip_if_vx_eq_vy
+	ifa	<=, HIGH($6FFF),	jp chip8_6XNN_set_vx_to_nn
+	ifa	<=, HIGH($7FFF),	jp chip8_7XNN_add_nn_to_vx
+	jp	chip8_decode_8xyz
+.decode_00xx
+	ldd	a, [hl]		; HL -= 1 (will point to MSB of opcode)
+	ifa	==, LOW($00E0),		jp disp_clear
+	ifa	==, LOW($00EE),		jp chip8_return
+	; need to restore MSB of opcode into A
+	ldi	a, [hl]		; HL += 1 (will point to LSB of opcode)
+	jp	chip8_call_RC1802 ; opcode is $0NNN
+.decode_9xxx_or_more
+	ifa	<=, HIGH($9FFFF),	jp chip8_9XY0_skip_if_vx_not_eq_vy
+
+chip8_call_RC1802:
+disp_clear:
+	bug_break	"unimplemented feature: RC1802 program"
+
+chip8_1NNN_jump:
+; jump to address MSB, LSB. (aka set PC to address in memory)
+; A already holds $1N (MSB), HL points to $NN (LSB of PC)
+	and	$0F	; apply mask to get $0N
+	ld	l, [hl]
+	ld	h, a	; HL now contains new PC
+	ld	bc, CHIP8_ROM
+	add	hl, bc	; add address offset to make PC valid
+	jp	chip8.decode_opcode	; decode next opcode from new PC
+
+chip8_call:
+; call address 0NNN
+; A contains MSB, HL points to LSB of next address
+	ld	b, a
+	ldi	a, [hl]	; HL now points to next opcode after subroutine return
+	ld	c, a	; BC now contains address to call
+	push	bc	; push PC address to "call"
+	push_pc_to_chip8_stack
+	pop	hl	; PC = subroutine address to call
+	; jump to new PC since we've pushed previous PC to chip8's stack
+	jp	chip8.decode_opcode
+
+; return from chip8 subroutine
+chip8_return:
+; returns. So we need to restore PC from chip8's stack
+	pop_pc_from_chip8_stack		; restores PC to HL
+	jp	chip8.decode_opcode	; decode next opcode from restored PC
+
+
+; skip next opcode if VX == NN (2nd byte of current opcode)
+chip8_3XNN_skip_if_vx_eq_nn:
+; A contains $3X. HL points to LSB, which is NN
+	and	$0F	; get X reg. offset
+	add	LOW(REG.0)	; get LSB of X reg. memory address
+	ld	c, a	; [$FF00+c] is now [X]
+	ldi	a, [hl]	; HL now points to next opcode
+	ld	b, a	; b stores NN
+	ld	a, [$FF00+c]
+	; twice increment HL if B (NN) == A (VX). (x2 inc hl skips next opcode)
+	ifa	==, b,	x2 inc hl
+	jp	chip8.decode_opcode
+
+; skip next opcode if VX != NN (2nd byte of current opcode)
+chip8_4XNN_skip_if_vx_not_eq_nn:
+; A contains $4X. HL now points to LSB, which is NN
+	and	$0F	; get X reg. offset
+	add	LOW(REG.0)	; get LSB of X reg. memory address
+	ld	c, a	; [$FF00+c] is now pointer to X register
+	ldi	a, [hl]	; HL now points to next opcode
+	ld	b, a	; b stores NN
+	ld	a, [$FF00+c]
+	; twice increment HL if B (NN) != A (VX). (x2 inc hl skips next opcode)
+	ifa	!=, b,	x2 inc hl
+	jp	chip8.decode_opcode
+
+; skip next opcode if VX == VY
+chip8_5XY0_skip_if_vx_eq_vy:
+; A contains $5X. HL nowpoints to LSB, which is $Y0
+	and	$0F	; get X reg. offset
+	add	LOW(REG.0)	; get LSB of X reg. mem address
+	ld	c, a	; [X] stored in C
+	ld	a, [$FF00+c]	; get VX
+	ld	b, a		; store VX in B
+	ldi	a, [hl]	; get $Y0 and HL now points to next opcode
+	and	$F0	; get Y reg. offset
+	add	LOW(REG.0)	; get LSB of Y reg. memory address
+	ld	c, a	; [Y] stored in C
+	ld	a, [$FF00+c]	; get VY
+	; skip next opcode if VX (B) == VY (A)
+	ifa	==, b,	x2 inc hl
+	jp	chip8.decode_opcode
+
+
+; set VX to NN
+chip8_6XNN_set_vx_to_nn:
+; HL points to NN, A contains $6X
+	and	$0F		; get register X offset
+	add	LOW(REG.0)	; get LSB of reg. X memory address
+	ld	c, a		; stow [X] in c
+	ldi	a, [hl]	; A = NN. [HL] now points to next opcode
+	ld	[$FF00+c], a
+	jp	chip8.decode_opcode
+
+; set VX += NN
+chip8_7XNN_add_nn_to_vx:
+; HL points to NN, contains $7X
+	and	$0F		; get reg. X offset
+	add	LOW(REG.0)	; get LSB of reg. X memory address
+	ld	c, a		; stow [X]
+	ld	a, [$FF00+c]	; get VX
+	add	[hl]	; add NN to VX
+	inc	hl	; HL now points to next opcode
+	ld	[$FF00+c], a	; store VX + NN in [X]
+	jp	chip8.decode_opcode
+
+chip8_decode_8xyz:
+; HL points to LSB of opcode
+; A holds 8X
+	and	$0F	; mask to get X register
+	add	LOW(REG.0)	; add REG.0 offset
+	ld	b, a	; store [X] in B
+	ldi	a, [hl]	; get $Y# and [HL] now points to next opcode
+	ld	e, a	; store backup of $Y#
+	and	$F0	; mask to get Y register
+	add	LOW(REG.0)	; add REG.0 offset
+	ld	c, a	; store [Y] in c
+	; BC now holds [X],[Y]  (assuming X == LSB of $FFXX)
+	push	hl	; store PC pointing to next opcode
+	ld	hl, .jump_table
+	ld	a, e	; restore $Y#
+	and	$0F	; apply mask to get $0# (subroutine #)
+	; jump table contains 2 bytes per entry (a 16-bit subroutine address)
+	; so we need to multiply subroutine # (reg. A) by 2 to get
+	; jump_table offset
+	add	a	; A = 2x
+	add	l		; <\
+	ld	l, a		;   | HL += A
+	if_flag	c, inc h	; </
+	; HL now points to jump address in jump table
+	ldi	a, [hl]		; load LSB of jump address
+	ld	h, [hl]		; load MSB of jump address
+	ld	l, a		; move LSB to L
+	; HL now points to correct 8xy# subroutine
+	ld	a, [$FF00+c]	; load VY
+	ld	c, b		; load [X] in C
+	ld	b, a		; store VY in B
+	ld	a, [$FF00+c]	; load VX in A
+	; now: A holds VX, B holds VY, C holds [X]
+	jp	hl	; jump to decoded 8xy# routine
+.jump_table
+; jump table contains 16-bit memory address of subroutines 0-F. Simply add
+; subroutine # twice to jump_table address and load 16bit address from there
+; into HL, then JP HL to begin the desired subroutine
+	DW	.xy0_vx_eq_vy
+	DW	.xy1_vx_eq_vx_or_vy
+	DW	.xy2_vx_eq_vx_and_vy
+	DW	.xy3_vx_eq_vx_xor_vy
+	DW	.xy4_add_vy_to_vx
+	DW	.xy5_sub_vy_from_vx
+	DW	.xy6_shift_vx_right
+	DW	.xy7_vx_eq_vy_minus_vx
+	DW	.xyz_not_implemented	; .xy8
+	DW	.xyz_not_implemented	; .xy9
+	DW	.xyz_not_implemented	; .xyA
+	DW	.xyz_not_implemented	; .xyB
+	DW	.xyz_not_implemented	; .xyC
+	DW	.xyz_not_implemented	; .xyD
+	DW	.xyE_shift_vx_left
+	DW	.xyz_not_implemented	; .xyF
+; remember. At this point
+; A => VX
+; BC => VY, [X]
+; PC has been pushed to gameboy stack
+.xyz_not_implemented
+; we get here if it broke. gracefully print message and move to next opcode
+	ld	bc, .jump_table	; overwrite all values
+	negate	bc
+	add	hl, bc	; calculate jump_table offset (aka routine # ?)
+	bug_break	"8xy? routine called nonimplemented version: %HL%"
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy0_vx_eq_vy
+	ld	a, b		; load VY into A
+	ld	[$FF00+c], a	; [X] = VY
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy1_vx_eq_vx_or_vy
+	or	b
+	ld	[$FF00+c], a	; [X] = VX | VY
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy2_vx_eq_vx_and_vy
+	and	b
+	ld	[$FF00+c], a	; [X] = VX & VY
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy3_vx_eq_vx_xor_vy
+	xor	b
+	ld	[$FF00+c], a	; [X] = VX ^ VY
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy4_add_vy_to_vx
+	add	b
+	ld	[$FF00+c], a	; [X] = VX + VY
+	ld	hl, REG.F		; <\
+	ld	[hl], 0			;   | set Carry if overflow
+	if_flag	c,	inc [hl]	; </
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy5_sub_vy_from_vx
+	sub	b
+	ld	[$FF00+c], a	; [X] = VX - VY
+	ld	hl, REG.F		; <\  clear Carry if overflow / borrow
+	ld	[hl], 1			;   | (subtraction is opposite to
+	if_flag	c,	dec [hl]	; </  addition concerning carry flag)
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy6_shift_vx_right
+	srl	a	; rotate VX right
+	ld	[$FF00+c], a	; [X] = VX >> 1
+	ld	hl, REG.F		; <\
+	ld	[hl], 0			;   | VF = bit-value shifted out of VX
+	if_flag	c,	inc [hl]	; </
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xy7_vx_eq_vy_minus_vx
+; beware the trap of using negate macro. Carry-flags are reversed, then
+	ld	e, a	; store VX
+	ld	a, b	; A = VY
+	sub	e	; A = VY - VX
+	ld	[$FF00+c], a	; [X] = VX - VY
+	ld	hl, REG.F		; <\  clear Carry if overflow / borrow
+	ld	[hl], 1			;   | (subtraction is opposite to
+	if_flag	c,	dec [hl]	; </  addition concerning carry flag)
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+.xyE_shift_vx_left
+	sla	a	; rotate VX left
+	ld	[$FF00+c], a	; [X] = VX << 1
+	ld	hl, REG.F		; <\
+	ld	[hl], 0			;   | VF = bit-value shifted out of VX
+	if_flag	c,	inc [hl]	; </
+	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
+
+
+chip8_9XY0_skip_if_vx_not_eq_vy:
+; A contains $9X, HL points to $Y0
+	and	$0F	; get X register offset from $9X
+	add	LOW(REG.0)	; get LSB of [X]
+	ld	c, a	; store [X]
+	ld	a, [$FF00+c]	; get VX
+	ld	b, a		; store VX
+	ldi	a, [hl]	; A = $Y0, HL points to next opcode
+	and	$F0
+	add	LOW(REG.0)	; get LSB of [Y]
+	ld	c, a
+	ld	a, [$FF00+c]	; get VY
+	; A = VY, B = VX
+	; if VX != VY, skip next opcode (aka "inc hl" twice)
+	ifa	!=, b,	x2 inc hl
+	jp	chip8.decode_opcode
+
+; set index to $0NNN + chip8_rom offset
+chip8_ANNN_set_index_nnn:
+; A contains $AN, HL points to $NN
+	and	$0F	; get $0N
+	ld	b, a
+	ldi	a, [hl]	; get $NN, HL now points to next opcode
+	ld	c, a	; BC now holds $0NNN
+	push	hl
+	ld	hl, CHIP8_ROM
+	add	hl, bc	; add CHIP8 offset. Otherwise REG.I will not be valid
+	store_rpair_from_hl	REG.I
+	pop	hl	; restore PC
+	jp	chip8.decode_opcode
+
+
+chip8_BNNN_jump_0NNN_plus_v0:
+; A contains $BN, HL points to NN
+	and	$0F	; get $0N
+	ld	l, [hl]	; load $NN into L. We're jumping. So overwrite HL away!
+	ld	h, a
+	; HL now contains $0NNN
+	ld	c, LOW(REG.0)
+	ld	a, [$FF00+c]	; load v0
+	ld	c, a
+	xor	a	; zero A
+	ld	b, a
+	; BC now contains $00VV (VV = V0 register value)
+	add	hl, bc	; add V0 to $0NNN
+	ld	bc, CHIP8_ROM
+	add	hl, bc	; add chip8 rom offset
+	; HL now contains new PC from jump
+	jp	chip8.decode_opcode
+
+; AND $NN with a random number, store in VX
+chip8_CXNN_vx_eq_nn_and_random:
+; A contains $CX, HL points to NN
+	and	$0F	; get X register offset
+	add	LOW(REG.0)	; add to REG.0
+	ld	c, a	; c holds [X]
+	ldi	a, [hl]	; A holds $NN, HL points to next opcode
+	ld	b, a	; store $NN in B
+	; get state of divisor register on gameboy as random input
+	; rDIV will be our random input. Always runs @ 16,384Hz
+	ldh	a, [rDIV]
+	and	b	; AND $NN with random rDIV input
+	ld	[$FF00+c], a	; store random-ish # in VX
+	jp	chip8.decode_opcode
+
+chip8_DXYN_draw_sprite_xy_n_high:
+; draw sprite @ x,y with width of 8 pixels, height of N pixels (max 16)
+; each row of pixels is read as bit-coded pixels starting at memory location
+; REG.I. REG.I doesn't change after this operation. VF is set to 1 if any
+; pixels are flipped from 1 to 0 as a result of this operation (pixels are
+; XOR'd onto screen) which indicates sprite collision
+	bug_break	"not yet implemented"
+	; NOT YET IMPLEMENTED
+
+chip8_EXzz_decode:
+; A holds $EX, HL points to $ZZ (either $9E or $A1)
+	and	$0F	; get [X] offset
+	add	LOW(REG.0)	; get register [X] address
+	ld	c, a	; c holds [X]
+	ldi	a, [hl]	; A=$9E or $A1, HL points to next opcode
+	ifa	==, $9E, jp .chip8_EX9E_skip_if_vx_eq_key
+; skip next opcode if key stored in REG.X not equal to key pressed (if any)
+.chip8_EXA1_skip_if_vx_not_eq_key
+	bug_break	"not yet implemented"
+
+; skip next opcode if key pressed (0-F) equals VX
+.chip8_EX9E_skip_if_vx_eq_key
+	bug_break	"not yet implemented"
+
+
+
+chip8_FXzz_decode:
+; A holds $FX, HL points to $ZZ (can be several variants)
+	and	$0F	; get X register offset
+	add	LOW(REG.0)	; get [x] register
+	ld	c, a	; c holds [x]
+	ldi	a, [hl]	; A = $??, HL points to next opcode
+	ifa	==, $07,	jp .chip8_FX07_vx_eq_delay_timer
+	ifa	==, $0A,	jp .chip8_FX0A_vx_eq_key_pressed
+	ifa	==, $15,	jp .chip8_FX15_delay_timer_eq_vx
+	ifa	==, $18,	jp .chip8_FX18_sound_timer_eq_vx
+	ifa	==, $1E,	jp .chip8_FX1E_add_vx_to_I
+	ifa	==, $29,	jp .chip8_FX29_I_eq_sprite_location_of_vx_char
+	ifa	==, $33,	jp .chip8_FX33_store_vx_bcd_at_I
+	ifa	==, $55,	jp .chip8_FX55_dump_v0_to_vx_at_I
+	ifa	==, $65,	jp .chip8_FX65_load_v0_to_vx_at_I
+; if none match, show error
+	jp	chip8_not_implemented
+; at this point, C holds [X], HL points to next opcode
+.chip8_FX07_vx_eq_delay_timer
+	ld	b, c	; move [X] to b
+	ld	c, LOW(TIMER_DELAY)
+	ld	a, [$FF00+c]	; load delay timer value
+	ld	c, b	; [c] points to [X]
+	ld	[$FF00+c], a	; set [X] to delay timer value
+	jp	chip8.decode_opcode
+.chip8_FX0A_vx_eq_key_pressed
+	ld	b, c	; move [X] to b
+	ld	c, LOW(KEY.ACTIVE)
+	ld	a, [$FF00+c]	; load active key
+	ld	c, b	; [c] points to [X]
+	ld	[$FF00+c], a	; set [X] to active key value
+	jp	chip8.decode_opcode
+.chip8_FX15_delay_timer_eq_vx
+	ld	a, [$FF00+c]	; load VX
+	ld	c, LOW(TIMER_DELAY)	; [c] points to [TIMER_DELAY]
+	ld	[$FF00+c], a	; load TIMER_DELAY with VX
+	jp	chip8.decode_opcode
+.chip8_FX18_sound_timer_eq_vx
+	ld	a, [$FF00+c]	; load VX
+	ld	c, LOW(TIMER_SOUND)	; [c] points to [TIMER_SOUND]
+	ld	[$FF00+c], a	; load TIMER_SOUND with VX
+	jp	chip8.decode_opcode
+.chip8_FX1E_add_vx_to_I
+	ld	a, [$FF00+c]	; load VX
+	push	hl	; store PC
+	ld	hl, REG.I_LSB
+	add	[hl]	; add LSB of I to VX
+	ld	[hl], a	; store I_LSB + VX
+	jp	nc, chip8.pop_pc	; if no overflow, done
+	; if overflow, increment MSB of I
+	dec	hl	; CRITICAL: This assumes REG.I == 1 + REG.I_LSB
+	; HL now points to REG.I
+	inc	[hl]	; increment REG.I's MSB
+	jp	chip8.pop_pc
+.chip8_FX29_I_eq_sprite_location_of_vx_char
+; I equals location of font data pointed at by VX. In this case, we add
+; VX to CHIP8_GFX
+	ld	a, [$FF00+c]	; load VX
+	ld	de, CHIP8_GFX	; load location of fonts / graphics
+	ld	c, LOW(REG.I_LSB)
+	add	e	; add offset to LSB
+	ld	[$FF00+c], a	; store LSB of REG.I
+	IF (CHIP8_GFX && $00FF) == $00
+	; MSB increment is only necessary if it's possible. Here, we know that
+	; if the LSB is $00, adding just a byte ($FF) will never increment MSB
+		if_flag	c,	inc b	; add MSB offset to B
+		ld	a, b	; move MSB to A
+		dec	c	; CRITICAL. Point [C] to [REG.I]
+		ld	[$FF00+c], a	; store MSB of REG.I
+	ENDC
+	jp	chip8.decode_opcode
+.chip8_FX33_store_vx_bcd_at_I
+	ld	a, [$FF00+c]	; get VX
+	push	hl	; preserve PC
+	; convert binary value in A to unpacked BCD form into ABC, MSB->LSB
+	ld	l, a
+	xor	a
+	ld	h, a	; HL = $00AA, where AA = value in A
+	ld	b, h
+	ld	c, l	; copy HL to BC
+	add	hl, hl	; 2x HL
+	add	hl, bc	; 3x HL
+	; we now have 3*A stored in HL
+	ld	bc, .FX33_bcd_table
+	add	hl, bc	; add bcd_table address to our 3*A.
+	ldpair	de, hl	; move bcd address to DE
+	; DE now points to the start of BCD representation of A
+	load_rpair_into_hl	REG.I	; overwrite A, C, HL
+	; HL now points to where REG.I points
+	ld	a, [bc]	; load HUNDREDS bcd digit
+	ldi	[hl], a	; store hundreds digit at I, advance I pointer
+	inc	bc	; bc now points to tens digit
+	ld	a, [bc]	; load TENS bcd digit
+	ldi	[hl], a	; store tens digit at I+1, advance to I pointer
+	inc	bc	; bc now points to ones digit
+	ldi	[hl], a	; store ones digit at I+2. I is +3'd now
+	; CRITICAL WARNING
+	; Do we update REG.I, or not?? Wiki doesn't say
+	; we assume (for now) that it DOES update. And that I changes at a
+	; rate of 1 per value written like similar routines in the
+	; $FXZZ address-space
+	store_rpair_from_hl	REG.I	; store +3'd REG.I
+	pop	hl	; restore PC @ next opcode
+	jp	chip8.decode_opcode
+.FX33_bcd_table
+; table for conversion between binary # and 3 bytes of BCD, where the order of
+; digits is HUNDREDS, TENS, ONES digits
+NUMBER = -1
+	DB	"silly"
+	REPT 255
+NUMBER = NUMBER + 1
+HUNDREDS = NUMBER / 100
+TENS = (NUMBER - HUNDREDS) / 10
+ONES = NUMBER % 10
+	DB	HUNDREDS
+	DB	TENS
+	DB	ONES
+	ENDR
+;end bcd_table
+.chip8_FX55_dump_v0_to_vx_at_I
+; c holds [X]
+	push	hl	; preserve PC
+	load_rpair_into_hl	REG.I
+	ld	b, c	; B is [X]
+	ld	c, LOW(REG.0)	; c is [REG.0]
+	; register B is now effectively a counter, since we copy from registers
+	; 0-X. If X == 0, we copy 1 register (0). If X == 1, we copy 2
+	; registers. (0-1)
+	inc	b	; so we increment B (our counter) before beginning
+._FX55_dump_loop
+	ld	a, [$FF00+c]	; load Vy
+	ldi	[hl], a		; write Vy to I, then increment I
+	inc	c	; increment to next register
+._FX55_check_done
+	dec	b	; check if we have more registers to copy
+	jr	nz, ._FX55_dump_loop
+._FX55_done
+	store_rpair_from_hl	REG.I	; store I
+	pop	hl	; restore PC
+	jp	chip8.decode_opcode
+.chip8_FX65_load_v0_to_vx_at_I
+; c holds [X]
+	push	hl	; preserve PC
+	load_rpair_into_hl	REG.I
+	ld	b, c	; B is [X]
+	ld	c, LOW(REG.0)	; c is [REG.0]
+	; register B is now effectively a counter, since we copy from I to
+	; registers 0-X. If X == 0, we copy to 1 register (0). If X == 1, we
+	; copy to 2 registers (0-1)
+	inc	b	; so we increment B (our counter) before beginning
+._FX65_restore_loop
+; DO WE INCREMENT I??? Wiki has ambiguous wording
+; but I think we do, since this is supposed to mimic a load from stack
+	ldi	a, [hl]	; read register Vy, then increment I
+	ld	[$FF00+c], a	; write Vy
+	inc	c	; increment to next register
+._FX65_check_done
+	dec	b	; check if we have more registers to copy to
+	jr	nz, ._FX65_restore_loop
+._FX65_done
+	store_rpair_from_hl	REG.I	; store I
+	pop	hl	; restore PC
+	jp	chip8.decode_opcode
+
+
+; decrement TIMERs until they reach 0
+vblank_handler:
+	push	AF
+	ldh	a, [TIMER_DELAY]
+	or	a
+	jr	z, .skip_delay_decrement
+	dec	a
+	ldh	[TIMER_DELAY], a
+.skip_delay_decrement
+	ldh	a, [TIMER_SOUND]
+	or	a
+	jr	z, .nosound
+	dec	a
+	ldh	[TIMER_SOUND], a
+	; should play a buzzer sound here, since TIMER_SOUND was nonzero
+.nosound
+.done
+	pop	AF
+	reti
+

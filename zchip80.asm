@@ -41,12 +41,13 @@ SECTION "ROM_entry_point", ROM0[$0100]	; ROM is given control from boot here
 ;* macro calls (such as NINTENDO_LOGO) MUST be indented to run
 SECTION "rom header", ROM0[$0104]
 	NINTENDO_LOGO	; add nintendo logo. Required to run on real hardware
-	ROM_HEADER	"0123456789ABCDE"
+	ROM_HEADER	"  Zchip80 emu  "
 
 include "dma.inc"
 include "vars.asm"
 include "syntax.inc"
 include "debug.inc"
+include "memory.asm"
 
 	var_HighRamByte	TIMER_DELAY
 	var_HighRamByte	TIMER_SOUND
@@ -69,13 +70,22 @@ include "debug.inc"
 	var_HighRamByte	REG.F	; carry Flag register. Set if sprites collide
 	var_HighRamByte	REG.I	; index register is 16-bit
 	var_HighRamByte	REG.I_LSB
-	var_HighRamByte	REG.PC		; PC is 16-bit
-	var_HighRamByte	REG.PC_LSB
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
 
 CHIP8_ROM = $D000	; 4KB of memory for chip8 ram: $D000 - $E000
+CHIP8_PC_BEGIN = CHIP8_ROM + $0200	; program begins here
+CHIP8_ROM_END = $DFFF
 CHIP8_GFX = $D000	; $D000-$D200 (512bytes) are reserved for fonts/gfx
+CHIP8_GFX_END = $D200
+; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
+; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
+; (used for clearing screen)
+CHIP8_BLANK_TILE = 32
+CHIP8_X_OFFSET_B = 4
+CHIP8_Y_OFFSET_B = 4
+CHIP8_WIDTH_B = 8
+CHIP8_HEIGHT_B = 4
 
 ; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
 ; the screen to 128x64. It's still small, but at least it'll look better
@@ -103,7 +113,7 @@ lda_register: MACRO
 	ld	a, [c]
 	ENDM
 
-; run twice the following command
+; run the following command twice (supports 3 args max currently)
 x2: MACRO
 	IF _NARG == 1
 	\1
@@ -197,7 +207,7 @@ chip8:
 ; as such, most routines should jp chip8.decode_opcode after completing their
 ; instruction
 .load_pc
-	load_rpair_into_hl	REG.PC
+	ld	hl, CHIP8_PC_BEGIN
 	jr	.decode_opcode
 .pop_pc
 	pop	hl	; fxn calls this if they pushed PC before jumping here
@@ -208,10 +218,11 @@ chip8:
 	ldi	a, [HL]	; HL will point to LSB of opcode
 	ifa	>=, HIGH($9000),	jp .decode_9xxx_or_more
 .decode_8xxx_or_less
+; A = MSB, [HL] points to LSB, just before next opcode
 	ifa	<=, HIGH($00EE),	jp .decode_00xx
-	ifa	<=, HIGH($0FFF),	jp chip8_call_RC1802
+	ifa	<=, HIGH($0FFF),	jp chip8_0NNN_call_RC1802
 	ifa	<=, HIGH($1FFF),	jp chip8_1NNN_jump
-	ifa	<=, HIGH($2FFF),	jp chip8_call
+	ifa	<=, HIGH($2FFF),	jp chip8_2NNN_call
 	ifa	<=, HIGH($3FFF),	jp chip8_3XNN_skip_if_vx_eq_nn
 	ifa	<=, HIGH($4FFF),	jp chip8_4XNN_skip_if_vx_not_eq_nn
 	ifa	<=, HIGH($5FFF),	jp chip8_5XY0_skip_if_vx_eq_vy
@@ -219,18 +230,56 @@ chip8:
 	ifa	<=, HIGH($7FFF),	jp chip8_7XNN_add_nn_to_vx
 	jp	chip8_decode_8xyz
 .decode_00xx
-	ldd	a, [hl]		; HL -= 1 (will point to MSB of opcode)
-	ifa	==, LOW($00E0),		jp disp_clear
-	ifa	==, LOW($00EE),		jp chip8_return
+; A = MSB, [HL] points to LSB, just before next opcode
+	ldd	a, [hl]		; Get LSB. HL will point to MSB of opcode
+	; Notice we compare to LOW() byte of 2byte opcode
+	ifa	==, LOW($00E0),		jp chip8_00E0_disp_clear
+	ifa	==, LOW($00EE),		jp chip8_00EE_return
 	; need to restore MSB of opcode into A
 	ldi	a, [hl]		; HL += 1 (will point to LSB of opcode)
-	jp	chip8_call_RC1802 ; opcode is $0NNN
+	jp	chip8_0NNN_call_RC1802 ; opcode is $0NNN
 .decode_9xxx_or_more
-	ifa	<=, HIGH($9FFFF),	jp chip8_9XY0_skip_if_vx_not_eq_vy
+; A = MSB, [HL] points to LSB, just before next opcode
+	ifa	<=, HIGH($9FFF),	jp chip8_9XY0_skip_if_vx_not_eq_vy
+	ifa	<=, HIGH($AFFF),	jp chip8_ANNN_set_index_nnn
+	ifa	<=, HIGH($BFFF),	jp chip8_BNNN_jump_0NNN_plus_v0
+	ifa	<=, HIGH($CFFF),	jp chip8_CXNN_vx_eq_nn_and_random
+	ifa	<=, HIGH($DFFF),	jp chip8_DXYN_draw_sprite_xy_n_high
+	ifa	<=, HIGH($EFFF),	jp chip8_EXzz_decode
+	jp	chip8_FXzz_decode
 
-chip8_call_RC1802:
-disp_clear:
+
+chip8_0NNN_call_RC1802:
 	bug_break	"unimplemented feature: RC1802 program"
+
+
+; clear screen by setting all relevant tiles to 
+chip8_00E0_disp_clear:
+	inc	hl
+	inc	hl	; HL points to next opcode
+	push	hl	; save PC
+; the below is an expanded form of instructions to write "blank" tiles to all
+; tiles that the chip8 uses
+X = CHIP8_X_OFFSET_B
+Y = CHIP8_Y_OFFSET_B	; X&Y offset (in bytes). Expect 5,5 or something
+	REPT	CHIP8_HEIGHT_B	; repeat for 4 lines
+	ld	hl, _SCRN0 + X + (Y * SCRN_VX_B) ; Tile # to begin writing
+	lcd_WaitVRAM	; (from memory.asm) wait until VRAM available
+	ld	a, CHIP8_BLANK_TILE	; pointer to "blank" tile
+		REPT	CHIP8_WIDTH_B	; write 8 tiles per line
+			ldi	[hl], a	; set screen tiles to blank
+		ENDR
+Y = Y + 1	; move to next tile down
+	ENDR
+	pop	hl	; restore PC
+	jp	chip8.decode_opcode
+
+
+chip8_00EE_return:
+; return from chip8 subroutine. So we need to restore PC from chip8's stack
+	pop_pc_from_chip8_stack		; restores PC to HL
+	jp	chip8.decode_opcode	; decode next opcode from restored PC
+
 
 chip8_1NNN_jump:
 ; jump to address MSB, LSB. (aka set PC to address in memory)
@@ -242,23 +291,20 @@ chip8_1NNN_jump:
 	add	hl, bc	; add address offset to make PC valid
 	jp	chip8.decode_opcode	; decode next opcode from new PC
 
-chip8_call:
+chip8_2NNN_call:
 ; call address 0NNN
-; A contains MSB, HL points to LSB of next address
-	ld	b, a
+; A contains $0N (MSB), HL points to $NN (LSB) of next address
+	and	$0F	; apply mask to get $0N
+	ld	b, a	; load $0N to B
 	ldi	a, [hl]	; HL now points to next opcode after subroutine return
-	ld	c, a	; BC now contains address to call
+	ld	c, a	; BC now contains $0NNN address to call
 	push	bc	; push PC address to "call"
-	push_pc_to_chip8_stack
+	push_pc_to_chip8_stack	; preserve PC (HL) on stack
 	pop	hl	; PC = subroutine address to call
+	ld	bc, CHIP8_ROM	; load CHIP8 offset
+	add	hl, bc	; add CHIP8 offset to address
 	; jump to new PC since we've pushed previous PC to chip8's stack
 	jp	chip8.decode_opcode
-
-; return from chip8 subroutine
-chip8_return:
-; returns. So we need to restore PC from chip8's stack
-	pop_pc_from_chip8_stack		; restores PC to HL
-	jp	chip8.decode_opcode	; decode next opcode from restored PC
 
 
 ; skip next opcode if VX == NN (2nd byte of current opcode)
@@ -297,6 +343,7 @@ chip8_5XY0_skip_if_vx_eq_vy:
 	ld	b, a		; store VX in B
 	ldi	a, [hl]	; get $Y0 and HL now points to next opcode
 	and	$F0	; get Y reg. offset
+	swap	;swap nibbles to get $0Y
 	add	LOW(REG.0)	; get LSB of Y reg. memory address
 	ld	c, a	; [Y] stored in C
 	ld	a, [$FF00+c]	; get VY
@@ -335,7 +382,8 @@ chip8_decode_8xyz:
 	ld	b, a	; store [X] in B
 	ldi	a, [hl]	; get $Y# and [HL] now points to next opcode
 	ld	e, a	; store backup of $Y#
-	and	$F0	; mask to get Y register
+	and	$F0	; mask to get Y register as $Y0
+	swap	; swap nibbles to get $0Y
 	add	LOW(REG.0)	; add REG.0 offset
 	ld	c, a	; store [Y] in c
 	; BC now holds [X],[Y]  (assuming X == LSB of $FFXX)
@@ -457,6 +505,7 @@ chip8_9XY0_skip_if_vx_not_eq_vy:
 	ld	b, a		; store VX
 	ldi	a, [hl]	; A = $Y0, HL points to next opcode
 	and	$F0
+	swap	; swap nibbles to get $0Y
 	add	LOW(REG.0)	; get LSB of [Y]
 	ld	c, a
 	ld	a, [$FF00+c]	; get VY
@@ -647,7 +696,6 @@ chip8_FXzz_decode:
 ; table for conversion between binary # and 3 bytes of BCD, where the order of
 ; digits is HUNDREDS, TENS, ONES digits
 NUMBER = -1
-	DB	"silly"
 	REPT 255
 NUMBER = NUMBER + 1
 HUNDREDS = NUMBER / 100

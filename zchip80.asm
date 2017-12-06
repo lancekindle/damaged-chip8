@@ -644,8 +644,23 @@ chip8_FXzz_decode:
 	jp	chip8.pop_pc
 .chip8_FX29_I_eq_sprite_location_of_vx_char
 ; I equals location of font data pointed at by VX. In this case, we add
-; VX to CHIP8_GFX
+; VX to CHIP8_GFX. It's like a lookup table, so we need to scale VX by the
+; size of each font (4x5). So we must multiply VX * 20 then add to bottom of
+; font address to get pointer to correct font
+; (Wiki says multiply by 5 only)
 	ld	a, [$FF00+c]	; load VX
+	push	hl		; store PC
+	ld	l, a
+	xor	a
+	ld	h, a
+	; HL = $00AA (aka 1*A)
+	add	hl, hl	; HL = 2A
+	add	hl, hl	; HL = 4A
+	ldpair	bc, hl	; store backup of 4*A
+	add	hl, hl	; HL = 8A
+	add	hl, hl	; HL = 16A
+	add	hl, bc	; HL = 20A
+	; HL is now 20 * VX
 	ld	de, CHIP8_GFX	; load location of fonts / graphics
 	ld	c, LOW(REG.I_LSB)
 	add	e	; add offset to LSB

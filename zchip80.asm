@@ -343,7 +343,7 @@ chip8_5XY0_skip_if_vx_eq_vy:
 	ld	b, a		; store VX in B
 	ldi	a, [hl]	; get $Y0 and HL now points to next opcode
 	and	$F0	; get Y reg. offset
-	swap	;swap nibbles to get $0Y
+	swap	a	;swap nibbles to get $0Y
 	add	LOW(REG.0)	; get LSB of Y reg. memory address
 	ld	c, a	; [Y] stored in C
 	ld	a, [$FF00+c]	; get VY
@@ -383,17 +383,17 @@ chip8_decode_8xyz:
 	ldi	a, [hl]	; get $Y# and [HL] now points to next opcode
 	ld	e, a	; store backup of $Y#
 	and	$F0	; mask to get Y register as $Y0
-	swap	; swap nibbles to get $0Y
+	swap	a	; swap nibbles to get $0Y
 	add	LOW(REG.0)	; add REG.0 offset
 	ld	c, a	; store [Y] in c
 	; BC now holds [X],[Y]  (assuming X == LSB of $FFXX)
 	push	hl	; store PC pointing to next opcode
-	ld	hl, .jump_table
+	ld	hl, .vector_table
 	ld	a, e	; restore $Y#
 	and	$0F	; apply mask to get $0# (subroutine #)
 	; jump table contains 2 bytes per entry (a 16-bit subroutine address)
 	; so we need to multiply subroutine # (reg. A) by 2 to get
-	; jump_table offset
+	; vector_table offset
 	add	a	; A = 2x
 	add	l		; <\
 	ld	l, a		;   | HL += A
@@ -409,10 +409,11 @@ chip8_decode_8xyz:
 	ld	a, [$FF00+c]	; load VX in A
 	; now: A holds VX, B holds VY, C holds [X]
 	jp	hl	; jump to decoded 8xy# routine
-.jump_table
-; jump table contains 16-bit memory address of subroutines 0-F. Simply add
-; subroutine # twice to jump_table address and load 16bit address from there
+.vector_table
+; vector table contains 16-bit memory address of subroutines 0-F. Simply add
+; subroutine # twice to vector_table address and load 16bit address from there
 ; into HL, then JP HL to begin the desired subroutine
+; (this is NOT a jump table. A jump table contains the full "jp .addr" opcode)
 	DW	.xy0_vx_eq_vy
 	DW	.xy1_vx_eq_vx_or_vy
 	DW	.xy2_vx_eq_vx_and_vy
@@ -435,9 +436,9 @@ chip8_decode_8xyz:
 ; PC has been pushed to gameboy stack
 .xyz_not_implemented
 ; we get here if it broke. gracefully print message and move to next opcode
-	ld	bc, .jump_table	; overwrite all values
+	ld	bc, .vector_table	; overwrite all values
 	negate	bc
-	add	hl, bc	; calculate jump_table offset (aka routine # ?)
+	add	hl, bc	; calculate vector_table offset (aka routine # ?)
 	bug_break	"8xy? routine called nonimplemented version: %HL%"
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
 .xy0_vx_eq_vy
@@ -505,7 +506,7 @@ chip8_9XY0_skip_if_vx_not_eq_vy:
 	ld	b, a		; store VX
 	ldi	a, [hl]	; A = $Y0, HL points to next opcode
 	and	$F0
-	swap	; swap nibbles to get $0Y
+	swap	a	; swap nibbles to get $0Y
 	add	LOW(REG.0)	; get LSB of [Y]
 	ld	c, a
 	ld	a, [$FF00+c]	; get VY

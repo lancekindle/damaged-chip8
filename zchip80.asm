@@ -256,22 +256,29 @@ chip8_0NNN_call_RC1802:
 
 ; clear screen by setting all relevant tiles to 
 chip8_00E0_disp_clear:
+; HL points to beginning of its own opcode, so we need to increment twice to
+; skip to next opcode
 	inc	hl
 	inc	hl	; HL points to next opcode
 	push	hl	; save PC
-; the below is an expanded form of instructions to write "blank" tiles to all
-; tiles that the chip8 uses
-X = CHIP8_X_OFFSET_B
-Y = CHIP8_Y_OFFSET_B	; X&Y offset (in bytes). Expect 5,5 or something
-	REPT	CHIP8_HEIGHT_B	; repeat for 4 lines
-	ld	hl, _SCRN0 + X + (Y * SCRN_VX_B) ; Tile # to begin writing
+
+	; we have to write 0 to all the pixels that are part of chip8.
+	; that means 16 tiles x 8 tiles... or 128 tiles.  Each tile is 16 bytes
+	; so a total of 2048 bytes.
+	; That's.... A LOT. Each write will take 2 cycles. So it'll take
+	; 4096 cycles to clear the screen. So much...
+	ld	hl, _VRAM	; later this will be changed to point to 
+				; tile 0 of chip8
 	lcd_WaitVRAM	; (from memory.asm) wait until VRAM available
-	ld	a, CHIP8_BLANK_TILE	; pointer to "blank" tile
-		REPT	CHIP8_WIDTH_B	; write 8 tiles per line
-			ldi	[hl], a	; set screen tiles to blank
-		ENDR
-Y = Y + 1	; move to next tile down
+	xor	a	; set A=0
+	ld	b, 16	; 16 x 128 bytes to write
+.clear_loop
+	REPT	128
+		ldi	[hl], a
 	ENDR
+	dec	b
+	jp	nz, .clear_loop
+
 	pop	hl	; restore PC
 	jp	chip8.decode_opcode
 
@@ -816,7 +823,7 @@ chip8_FXzz_decode:
 	ifa	==, $55,	jp .chip8_FX55_dump_v0_to_vx_at_I
 	ifa	==, $65,	jp .chip8_FX65_load_v0_to_vx_at_I
 ; if none match, show error
-	jp	chip8_not_implemented
+	bug_break	"FX%A not implemented"
 ; at this point, C holds [X], HL points to next opcode
 .chip8_FX07_vx_eq_delay_timer
 	ld	b, c	; move [X] to b

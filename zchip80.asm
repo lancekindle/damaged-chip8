@@ -72,6 +72,7 @@ include "memory.asm"
 	var_HighRamByte	REG.I_LSB
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
+	var_HighRamByte	rDE_BIT5	; specific variable for drawing
 
 CHIP8_ROM = $D000	; 4KB of memory for chip8 ram: $D000 - $E000
 CHIP8_PC_BEGIN = CHIP8_ROM + $0200	; program begins here
@@ -563,14 +564,221 @@ chip8_CXNN_vx_eq_nn_and_random:
 	ld	[$FF00+c], a	; store random-ish # in VX
 	jp	chip8.decode_opcode
 
+
+; set F to 1. Overwrites A
+SET_REG_F: MACRO
+	ld	a, 1
+	ld	[REG.F], a
+	ENDM
+
 chip8_DXYN_draw_sprite_xy_n_high:
-; draw sprite @ x,y with width of 8 pixels, height of N pixels (max 16)
+; draw sprite @ Vx,Vy with width of 8 pixels, height of N pixels (max 16)
 ; each row of pixels is read as bit-coded pixels starting at memory location
 ; REG.I. REG.I doesn't change after this operation. VF is set to 1 if any
 ; pixels are flipped from 1 to 0 as a result of this operation (pixels are
-; XOR'd onto screen) which indicates sprite collision
-	bug_break	"not yet implemented"
-	; NOT YET IMPLEMENTED
+; XOR'd onto screen) which indicates sprite collision. REG.I points to sprite?
+; A contains $DX, [HL] points to $YN
+	and	$0F	; mask to get $0X offset
+	add	LOW(REG.0)	;add REG.0 to offset
+	ld	c, a	; [X] in [C]
+	ld	a, [$FF00+c]	; get VX
+	ld	b, a	; store VX
+	ld	a, [hl]	; get $YN, but do NOT increment HL.
+	; (we will re-read $YN to get $0N later)
+	and	$F0	; mask to get $Y0
+	swap	a	; swap to get $0Y
+	add	LOW(REG.0)	; add REG.0 to offset to get full address
+	ld	c, a
+	ld	a, [$FF00+c]	; get VY
+	ld	c, a	; store VY in C
+	; BC contains $VX,VY   where VX = value of [X], and VY = value of [Y]
+	; [HL] points to $YN (so we can get height)
+	ldi	a, [hl]	; load $YN. HL now points to next opcode
+	push	hl	; store next opcode pointer
+	and	$0F	; get $0N
+	push	af	; preserve $0N
+.get_Y_tile_offset
+	; DE will point to tile 0. Each tile is 8x8 pixels. So we need to jump down
+	; 1 tile Y/8 times (jumping down a tile is 256 bytes), or "inc D"
+	ld	a, c	; get VY
+	srl	a	; A/2
+	srl	a	; A/4
+	srl	a	; A/8
+	; now we multiply 256 by A (we can put 256 in HL)
+	; but since H == 1 (aka HL=256), then we multiply H * A
+	; but since H == 1, we just set H = A
+	ld	h, a	; tadah. now [HL] points to correct tile row.
+			; (but not correct pixel row within tile)
+	ld	a, c	; restore VY
+	and	%00000111	; get first 3 bits only of VY
+	ld	l, a	; now [HL] points to correct tile row and correct
+			; pixel row of tile. BUT it does not yet point to
+			; correct tile COLUMN
+	push	hl	; store Y-corrected version of VRAM tile-adjusted address
+.get_X_tile_offset
+	; now we need to get tile offset according to X coordinates
+	; which since each tile is 8 pixels wide
+	; but then since each tile is 16 bytes, we divide by 8 to get tiles to skip
+	; then multiply by 16 to account for each tile's # of bytes
+	; so we basically need to A/8, then A*16
+	; which is really same as "AND %11111000", then "add a, a"
+	; except that may overflow A. So let's put that in HL
+	ld	a, b	; get VX
+	and	%11111000
+	ld	l, a
+	ld	h, 0
+	add	hl, hl	; x2 VX ==> [HL] now contains X offset
+	pop	de	; pop Y's offset
+	add	hl, de	; add Y's offset to X's offset
+	ld	de, _VRAM
+	add	hl, de	; add _vram (tile) offset. Now HL points to correct
+	; tile (via row, column), and the correct pixel row within the correct
+	; tile
+	; but the correct pixel within the correct row? that will be pointed at
+	; by a pixel mask
+	ldpair	de, hl	; load tile pointer into DE
+	load_rpair_into_hl	REG.I	; overwrites A, HL
+.get_bitmask
+	; now GET that PIXEL BITMASK!
+	; VX is not fully accounted for. Within the correct tile, and the
+	; correct row of pixels, we still need to start at a pixel.
+	; this is where we compute a bitmask to represent the starting pixel
+	; X coordinate. The bitmask will move right as we sample bits to the
+	; right
+	ld	a, b
+	and	%00000111
+	; basically, we need to turn the 3 bit value into a single
+	; bit toggled on that represents bitmask 0-7
+
+; CASE mimics IFA but jumps to .endcase after a match occurs
+	case	==, 0, .endcase, ld	b, %00000001
+	case	==, 1, .endcase, ld	b, %00000010
+	case	==, 2, .endcase, ld	b, %00000100
+	case	==, 3, .endcase, ld	b, %00001000
+	case	==, 4, .endcase, ld	b, %00010000
+	case	==, 5, .endcase, ld	b, %00100000
+	case	==, 6, .endcase, ld	b, %01000000
+	case	==, 7, .endcase, ld	b, %10000000
+.endcase
+	pop	af	; restore $0N in A
+	; ASSUME here that B contains mask
+	; ASSUME that [HL] contains REG.I (so it's pointing to sprite to draw)
+	; ASSUME that [DE] points to _VRAM tile / pixel row
+	; ASSUME that A contains N (height of sprite to be drawn)
+	inc	a
+	dec	a
+	jp	z, .done_drawing_sprite
+	push	af	; store # of pixels
+	ld	a, e
+	and	%00010000	; get bit 5 of DE
+	ld	[rDE_BIT5], a	; set last known bit 5 of DE
+	; bit5 only changes if we accidentally roll from a tile to the tile
+	; to the right of the current tile. We check this to determine if we
+	; need to jump from bottom of a tile to top of the tile below it (a
+	; jump of 240 bytes)
+draw_pixel: MACRO
+.pixel_\1_\@
+	bit	\1, [hl] ; test bit x. If it's 0 we don't have to do anything
+			 ; if it's 1, we xor current mask with [de]
+	jp	z, .rotate_mask_\@
+	ld	a, [de]	; load vram pixels (8 pixels at a time), 1 bit of shading
+	ld	c, a	; store copy of vram pixels
+	xor	b	; here's where we would set REG.F to 1 if bit is zeroed
+	ld	[de], a	; set VRAM pixel
+	ifa	<, c, SET_REG_F	; A < C if pixel was set to zero
+.rotate_mask_\@
+	rlc	b	; rotate mask. If it rotates back to bit 7, we need to
+			; jump to next sprite (but copy current pixels byte
+			; to 2nd shading byte first)
+	call	c, .draw_jumps_to_next_tile	; also responsible for copying
+						; tile to next planar tile row
+	ENDM
+
+.draw_sprite_row_loop
+	draw_pixel	7
+	draw_pixel	6
+	draw_pixel	5
+	draw_pixel	4
+	draw_pixel	3
+	draw_pixel	2
+	draw_pixel	1
+	draw_pixel	0
+	; IF mask is at bit 7, we JUST copied data to 2nd byte of pixel shading
+	; otherwise, this is the 2nd byte we're modifying, and we MUST copy
+	; byte to it's mirrored byte @ [DE+1]
+	; (so let's just do it regardless)
+	ld	a, [de]	; load pixels 1 byte
+	inc	de
+	ld	[de], a	; set pixels 2 byte to mirror 1st. TADAH!
+
+.check_done_drawing
+	; check if done drawing
+	pop	af
+	dec	a
+	jr	z, .done_drawing_sprite
+	push	af	; if not done, re-push number of rows left to draw
+
+.adjust_DE_back_to_next_row
+	; since .draw_jumps_to_next_tile happens ONCE (at some point)
+	; after all 8 pixels have been drawn, we ALWAYS have to rewind
+	; backwards one tile, then jump down one row on same tile
+	; so we subtract 16 (rewind 1 tile) from DE, then add 1 (jump 1 row
+	; down... Normally we'd add 2 but we just incremented DE by mirroring
+	; [DE] to [DE+1])
+	; (remember, two bytes per pixel row). So DE = DE - 16 + 1; DE -= 15
+	ld	a, e
+	sub	15
+	ld	e, a
+	; the above subtract 15 only causes an underflow if E < 15
+	if_flag	c,	dec d
+	;[DE] now points to next row's pixels (of tile)
+	; we need [HL] to point to next row of sprite's pixels
+	inc	hl
+.check_DE_migration
+	; OK but at this point, if [DE] jumps from bottom of tile to top of
+	; next tile, that's BAD. We need to detect that. We wanted, instead
+	; to have jumpted from bottom of tile to the top of the tile below
+	; [DE]'s starting tile. So we'd add 15 tiles (15x16=240) to [DE] IFF
+	; it accidentally jumped to top of next tile. That only happens if
+	; bit 5 of E toggles/changes
+	ld	a, e
+	and	%00010000	; get bit 5 of E (and of DE in general)
+	ld	c, a	; store bit 5 of DE
+	ld	a, [rDE_BIT5]	; get last known bit 5 of DE
+	xor	c	; xor with DE's original bit5. If it's nonzero, then 
+			; bit 5 of DE was changed!
+	jp	z, .draw_sprite_row_loop	; jump if we didn't move to another tile
+.adjust_DE_to_top_of_tile_below
+	; if we get to here, we need to add 15 tiles' worth of bytes to DE
+	; to make up for the fact that DE just moved from bottom of one tile
+	; to top of tile on the right. (We want to move it so that it ends up
+	; at top of tile below it, instead). 15 x 16 (bytes per tile) = 240
+	ld	a, e	; load LSB of tile pointer
+	add	240
+	ld	e, a
+	if_flag	c,	inc d	; MSB + 1 if necessary
+	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
+	jp	.draw_sprite_row_loop
+.done_drawing_sprite
+	jp	chip8.pop_pc
+.draw_jumps_to_next_tile
+	; this does 2 things: 1) copy current row to next byte. This sets
+	; shading for this row to be mirrored (As gameboy uses 2 bytes in planar
+	; format for shading 8 pixels per tile).
+	; 2) jump to next tile's same row. Since each tile is 8 rows of 2 bytes
+	; each, we add 16 to our tile pointer
+	ld	a, [de]	; reload our new current tile row
+	inc	de
+	ld	[de], a	; set 2nd shading byte for pixel row
+	; now we need to add 15 (+1 already added with inc de) to de
+	ld	a, 15
+	add	e
+	ld	e, a
+	if_flag	c, inc	d
+	; [DE] now points to next tile's row
+	; and previous row's 1st shading byte was copied to 2nd shading byte
+	ret
+
 
 chip8_EXzz_decode:
 ; A holds $EX, HL points to $ZZ (either $9E or $A1)

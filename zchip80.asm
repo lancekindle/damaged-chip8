@@ -649,26 +649,28 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	and	%00000111
 	; basically, we need to turn the 3 bit value into a single
 	; bit toggled on that represents bitmask 0-7
+	; if A == 0, that means we start at beginning of tile... %10000000
+	; so the bitmask is reversed compared to the value
 
-; CASE mimics IFA but jumps to .endcase after a match occurs
-	case	==, 0, .endcase, ld	b, %00000001
-	case	==, 1, .endcase, ld	b, %00000010
-	case	==, 2, .endcase, ld	b, %00000100
-	case	==, 3, .endcase, ld	b, %00001000
-	case	==, 4, .endcase, ld	b, %00010000
-	case	==, 5, .endcase, ld	b, %00100000
-	case	==, 6, .endcase, ld	b, %01000000
-	case	==, 7, .endcase, ld	b, %10000000
+	; CASE mimics IFA but jumps to .endcase after a match occurs
+	case	==, 0, .endcase, ld	b, %10000000
+	case	==, 1, .endcase, ld	b, %01000000
+	case	==, 2, .endcase, ld	b, %00100000
+	case	==, 3, .endcase, ld	b, %00010000
+	case	==, 4, .endcase, ld	b, %00001000
+	case	==, 5, .endcase, ld	b, %00000100
+	case	==, 6, .endcase, ld	b, %00000010
+	case	==, 7, .endcase, ld	b, %00000001
 .endcase
 	pop	af	; restore $0N in A
-	; ASSUME here that B contains mask
-	; ASSUME that [HL] contains REG.I (so it's pointing to sprite to draw)
+	; ASSUME here that B contains bitmask
+	; ASSUME that HL contains REG.I (so it's pointing to sprite to draw)
 	; ASSUME that [DE] points to _VRAM tile / pixel row
 	; ASSUME that A contains N (height of sprite to be drawn)
 	inc	a
 	dec	a
 	jp	z, .done_drawing_sprite
-	push	af	; store # of pixels
+	push	af	; store # of rows to draw
 	ld	a, e
 	and	%00010000	; get bit 5 of DE
 	ld	[rDE_BIT5], a	; set last known bit 5 of DE
@@ -683,12 +685,13 @@ draw_pixel: MACRO
 	jp	z, .rotate_mask_\@
 	ld	a, [de]	; load vram pixels (8 pixels at a time), 1 bit of shading
 	ld	c, a	; store copy of vram pixels
-	xor	b	; here's where we would set REG.F to 1 if bit is zeroed
+	xor	b	; xor bitmask to toggle on / off pixel
+	; If bit is zeroed from the xor operation, need to set REG.F
 	ld	[de], a	; set VRAM pixel
-	ifa	<, c, SET_REG_F	; A < C if pixel was set to zero
+	ifa	<, c, SET_REG_F	; A < C if pixel was set to zero / toggled off
 .rotate_mask_\@
 	rlc	b	; rotate mask. If it rotates back to bit 7, we need to
-			; jump to next sprite (but copy current pixels byte
+			; jump to next tile (but copy current pixels byte
 			; to 2nd shading byte first)
 	call	c, .draw_jumps_to_next_tile	; also responsible for copying
 						; tile to next planar tile row

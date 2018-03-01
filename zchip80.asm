@@ -70,15 +70,20 @@ include "memory.asm"
 	var_HighRamByte	REG.F	; carry Flag register. Set if sprites collide
 	var_HighRamByte	REG.I	; index register is 16-bit
 	var_HighRamByte	REG.I_LSB
+; I grow the stack upward in memory
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
 	var_HighRamByte	rDE_BIT5	; specific variable for drawing
-
-CHIP8_ROM = $D000	; 4KB of memory for chip8 ram: $D000 - $E000
-CHIP8_PC_BEGIN = CHIP8_ROM + $0200	; program begins here
-CHIP8_ROM_END = $DFFF
-CHIP8_GFX = $D000	; $D000-$D200 (512bytes) are reserved for fonts/gfx
-CHIP8_GFX_END = $D200
+CHIP8_DATA = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
+			; including registers, rom, stack, graphics, etc.
+CHIP8_FONT = CHIP8_DATA	; $D000-$D200 (512bytes) are reserved for fonts/gfx
+CHIP8_FONT_END = CHIP8_FONT + $0200
+CHIP8_ROM = CHIP8_FONT_END	; actual rom data is loaded at address $D200
+CHIP8_PC_BEGIN = CHIP8_ROM 	; program counter begins here, where ROM begins
+CHIP8_CALL_STACK = CHIP8_DATA + $0EA0  ; call stack / variables: 96 bytes
+CHIP8_DISPLAY_TILES = CHIP8_CALL_STACK + $0060	; $DF00 -> $DFFF
+						; holds tiles / display buffer
+CHIP8_DATA_END = CHIP8_DATA + $1000 ; $E000
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
 ; (used for clearing screen)
@@ -627,7 +632,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; which since each tile is 8 pixels wide
 	; but then since each tile is 16 bytes, we divide by 8 to get tiles to skip
 	; then multiply by 16 to account for each tile's # of bytes
-	; so we basically need to A/8, then A*16
+	; so we basically need to A/8, then A*16 (aka a >> 3, then a << 4)
 	; which is really same as "AND %11111000", then "add a, a"
 	; except that may overflow A. So let's put that in HL
 	ld	a, b	; get VX
@@ -652,7 +657,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; this is where we compute a bitmask to represent the starting pixel
 	; X coordinate. The bitmask will move right as we sample bits to the
 	; right
-	ld	a, b
+	ld	a, b		; load VX
 	and	%00000111
 	; basically, we need to turn the 3 bit value into a single
 	; bit toggled on that represents bitmask 0-7
@@ -823,7 +828,7 @@ chip8_FXzz_decode:
 	ifa	==, $55,	jp .chip8_FX55_dump_v0_to_vx_at_I
 	ifa	==, $65,	jp .chip8_FX65_load_v0_to_vx_at_I
 ; if none match, show error
-	bug_break	"FX%A not implemented"
+	bug_break	"FX%A% not implemented"
 ; at this point, C holds [X], HL points to next opcode
 .chip8_FX07_vx_eq_delay_timer
 	ld	b, c	; move [X] to b
@@ -863,7 +868,7 @@ chip8_FXzz_decode:
 	jp	chip8.pop_pc
 .chip8_FX29_I_eq_sprite_location_of_vx_char
 ; I equals location of font data pointed at by VX. In this case, we add
-; VX to CHIP8_GFX. It's like a lookup table, so we need to scale VX by the
+; VX to CHIP8_FONT. It's like a lookup table, so we need to scale VX by the
 ; size of each font (4x5). So we must multiply VX * 20 then add to bottom of
 ; font address to get pointer to correct font
 ; (Wiki says multiply by 5 only)
@@ -880,11 +885,11 @@ chip8_FXzz_decode:
 	add	hl, hl	; HL = 16A
 	add	hl, bc	; HL = 20A
 	; HL is now 20 * VX
-	ld	de, CHIP8_GFX	; load location of fonts / graphics
+	ld	de, CHIP8_FONT	; load location of fonts / graphics
 	ld	c, LOW(REG.I_LSB)
 	add	e	; add offset to LSB
 	ld	[$FF00+c], a	; store LSB of REG.I
-	IF (CHIP8_GFX && $00FF) == $00
+	IF (CHIP8_FONT && $00FF) != $00
 	; MSB increment is only necessary if it's possible. Here, we know that
 	; if the LSB is $00, adding just a byte ($FF) will never increment MSB
 		if_flag	c,	inc b	; add MSB offset to B

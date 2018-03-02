@@ -73,7 +73,7 @@ include "memory.asm"
 ; I grow the stack upward in memory
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
-	var_HighRamByte	rDE_BIT5	; specific variable for drawing
+	var_HighRamByte	rDE_BIT4	; specific variable for drawing
 CHIP8_DATA = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
 			; including registers, rom, stack, graphics, etc.
 CHIP8_FONT = CHIP8_DATA	; $D000-$D200 (512bytes) are reserved for fonts/gfx
@@ -95,6 +95,7 @@ CHIP8_HEIGHT_B = 4
 
 ; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
 ; the screen to 128x64. It's still small, but at least it'll look better
+; DON'T do this yet, though. Drawing in Original Resolution to allow quick use
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -259,33 +260,31 @@ chip8_0NNN_call_RC1802:
 	bug_break	"unimplemented feature: RC1802 program"
 
 
-; clear screen by setting all relevant tiles to 
+; clear screen by setting all relevant tiles to 0. Each "write" takes 2 cycles
 chip8_00E0_disp_clear:
 ; HL points to beginning of its own opcode, so we need to increment twice to
-; skip to next opcode
+; arrive at next opcode
 	inc	hl
 	inc	hl	; HL points to next opcode
 	push	hl	; save PC
 
 	; we have to write 0 to all the pixels that are part of chip8.
-	; that means 16 tiles x 8 tiles... or 128 tiles.  Each tile is 16 bytes
-	; so a total of 2048 bytes.
-	; That's.... A LOT. Each write will take 2 cycles. So it'll take
-	; 4096 cycles to clear the screen. So much...
-	ld	hl, _VRAM	; later this will be changed to point to 
-				; tile 0 of chip8
-	lcd_WaitVRAM	; (from memory.asm) wait until VRAM available
-	xor	a	; set A=0
-	ld	b, 16	; 16 x 128 bytes to write
+	; if we stick to the resolution of 64x32, it's 8x4 tiles = 32 tiles
+	; each tile is 16 bytes large -> 512 bytes to copy
+	; Later on, we might take advantage of the fact that CHIP8 games are
+	; B/W, meaning we don't need all four shades in the tiles we can copy
+	; the every other byte from the tile
+
+	ld	hl, CHIP8_DISPLAY_TILES
+	xor	a
+	ld	b, 16
 .clear_loop
-	REPT	128
-		ldi	[hl], a
+	REPT 32	; repeat once per tile to copy
+		ldi	[hl], a	; write 0 to tiles
 	ENDR
 	dec	b
-	jp	nz, .clear_loop
-
-	pop	hl	; restore PC
-	jp	chip8.decode_opcode
+	jr	nz, .clear_loop
+	jp	chip8.pop_pc
 
 
 chip8_00EE_return:
@@ -589,6 +588,21 @@ chip8_DXYN_draw_sprite_xy_n_high:
 ; REG.I. REG.I doesn't change after this operation. VF is set to 1 if any
 ; pixels are flipped from 1 to 0 as a result of this operation (pixels are
 ; XOR'd onto screen) which indicates sprite collision. REG.I points to sprite?
+;==
+; this is a complicated function because the graphical memory representation
+; on the gameboy is of 4x8 tiles. Thus the gameboy screen really looks like:
+; |_|_|_|_|_|    where each square is really 8x8 pixels. Each row of 8 pixels
+; |_|_|_|_|_|    is 2 bytes (2bits = 1 pixel), so each tile is 16 Bytes big.
+; |_|_|_|_|_|    And since we draw 8 pixels per row, there's a large
+; |_|_|_|_|_|    possibility that we draw on at least two tiles on any given
+; drawing row.
+; Since the 2nd byte in that pixel row is ALWAYS going to mirror the first
+; byte, we won't alter it at all.  We assume it's 0, and will stay 0. We can
+; adjust the screen palette so that the altered byte will be black/white.
+; Another thing to note: We may traverse to a tile BELOW our current tile if we
+; finish drawing on the bottom of a tile. Which requires adding 16 tiles to our
+; memory address (-adjustments for bottom vs top of tile)
+;==
 ; A contains $DX, [HL] points to $YN
 	and	$0F	; mask to get $0X offset
 	add	LOW(REG.0)	;add REG.0 to offset
@@ -610,40 +624,49 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	and	$0F	; get $0N
 	push	af	; preserve $0N
 .get_Y_tile_offset
-	; DE will point to tile 0. Each tile is 8x8 pixels. So we need to jump down
-	; 1 tile Y/8 times (jumping down a tile is 256 bytes), or "inc D"
+	; DE will point to tile 0. Each tile is 8x8 pixels, 8 bytes per tile
+	; CRITICAL. YES, 8 Bytes per tile. CHIP8 is B/W, so we store the tiles
+	; in ram as 8 bytes each, and double-copy each byte into VRAM.
+	; So we need to jump down 1 tile Y/8 times (jumping down a tile is
+	; jumping a full row of tiles. Since we treat each row as 8 tiles, 8
+	; byte per row, we inc DE by 8x8, or 64 Bytes)
+	; So it's really VY / 8, then x64
+	; or... VY >> 3, then VY << 6. OR (VY & %11111000) << 3
 	ld	a, c	; get VY
-	srl	a	; A/2
-	srl	a	; A/4
-	srl	a	; A/8
-	; now we multiply 256 by A (we can put 256 in HL)
-	; but since H == 1 (aka HL=256), then we multiply H * A
-	; but since H == 1, we just set H = A
-	ld	h, a	; tadah. now [HL] points to correct tile row.
-			; (but not correct pixel row within tile)
+	and	%11111000	; aka (A >> 3) << 3
+	; now we multiply A by 8
+	ld	l, a
+	ld	h, 0
+	; HL => A
+	ldpair	de, hl	; load a copy of A in DE
+	add	hl, hl	; HL = 2A
+	add	hl, de	; HL = 3A
+	; tadah. now [HL] points to correct tile row.
+	; (but not correct pixel row within tile)
 	ld	a, c	; restore VY
 	and	%00000111	; get first 3 bits only of VY
+	add	l
+	if_flag	c, inc	h	; add first 3 bits of VY to HL
 	ld	l, a	; now [HL] points to correct tile row and correct
 			; pixel row of tile. BUT it does not yet point to
 			; correct tile COLUMN
-	push	hl	; store Y-corrected version of VRAM tile-adjusted address
+	push	hl	; store Y-corrected version of tile-adjusted address
 .get_X_tile_offset
 	; now we need to get tile offset according to X coordinates
 	; which since each tile is 8 pixels wide
-	; but then since each tile is 16 bytes, we divide by 8 to get tiles to skip
-	; then multiply by 16 to account for each tile's # of bytes
-	; so we basically need to A/8, then A*16 (aka a >> 3, then a << 4)
-	; which is really same as "AND %11111000", then "add a, a"
-	; except that may overflow A. So let's put that in HL
+	; but then since each tile is 8 bytes, we divide by 8 to get tiles to skip
+	; then multiply by 8 to account for each tile's # of bytes
+	; so we basically need to A/8, then A*8 (aka a >> 3, then a << 3)
+	; which is really same as "AND %11111000"
 	ld	a, b	; get VX
 	and	%11111000
 	ld	l, a
-	ld	h, 0
-	add	hl, hl	; x2 VX ==> [HL] now contains X offset
-	pop	de	; pop Y's offset
+	ld	h, 0	; VX ==> [HL] now contains X offset
+	pop	de	; pop Y tile's offset
 	add	hl, de	; add Y's offset to X's offset
-	ld	de, _VRAM
-	add	hl, de	; add _vram (tile) offset. Now HL points to correct
+	ld	de, CHIP8_DISPLAY_TILES	; this is where this routine draws
+					; during vblank this is copied to VRAM
+	add	hl, de	; add (tile) offset. Now HL points to correct
 	; tile (via row, column), and the correct pixel row within the correct
 	; tile
 	; but the correct pixel within the correct row? that will be pointed at
@@ -684,12 +707,11 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	jp	z, .done_drawing_sprite
 	push	af	; store # of rows to draw
 	ld	a, e
-	and	%00010000	; get bit 5 of DE
-	ld	[rDE_BIT5], a	; set last known bit 5 of DE
-	; bit5 only changes if we accidentally roll from a tile to the tile
+	and	%00001000	; get bit 4 of DE
+	ld	[rDE_BIT4], a	; set last known bit 4 of DE
+	; bit4 only changes if we accidentally roll from a tile to the tile
 	; to the right of the current tile. We check this to determine if we
-	; need to jump from bottom of a tile to top of the tile below it (a
-	; jump of 240 bytes)
+	; need to jump from bottom of a tile to top of the tile below it
 draw_pixel: MACRO
 .pixel_\1_\@
 	bit	\1, [hl] ; test bit x. If it's 0 we don't have to do anything
@@ -718,14 +740,6 @@ draw_pixel: MACRO
 	draw_pixel	2
 	draw_pixel	1
 	draw_pixel	0
-	; IF mask is at bit 7, we JUST copied data to 2nd byte of pixel shading
-	; otherwise, this is the 2nd byte we're modifying, and we MUST copy
-	; byte to it's mirrored byte @ [DE+1]
-	; (so let's just do it regardless)
-	ld	a, [de]	; load pixels 1 byte
-	inc	de
-	ld	[de], a	; set pixels 2 byte to mirror 1st. TADAH!
-
 .check_done_drawing
 	; check if done drawing
 	pop	af
@@ -737,12 +751,11 @@ draw_pixel: MACRO
 	; since .draw_jumps_to_next_tile happens ONCE (at some point)
 	; after all 8 pixels have been drawn, we ALWAYS have to rewind
 	; backwards one tile, then jump down one row on same tile
-	; so we subtract 16 (rewind 1 tile) from DE, then add 1 (jump 1 row
-	; down... Normally we'd add 2 but we just incremented DE by mirroring
-	; [DE] to [DE+1])
-	; (remember, two bytes per pixel row). So DE = DE - 16 + 1; DE -= 15
+	; so we subtract 8 (rewind 1 tile) from DE, then add 1 (jump 1 row
+	; down)
+	; (remember, two bytes per pixel row). So DE = DE - 8 + 1; DE -= 7
 	ld	a, e
-	sub	15
+	sub	7
 	ld	e, a
 	; the above subtract 15 only causes an underflow if E < 15
 	if_flag	c,	dec d
@@ -753,23 +766,26 @@ draw_pixel: MACRO
 	; OK but at this point, if [DE] jumps from bottom of tile to top of
 	; next tile, that's BAD. We need to detect that. We wanted, instead
 	; to have jumpted from bottom of tile to the top of the tile below
-	; [DE]'s starting tile. So we'd add 15 tiles (15x16=240) to [DE] IFF
+	; [DE]'s starting tile. So we'd add 7 tiles (7x8=56) to [DE] IFF
 	; it accidentally jumped to top of next tile. That only happens if
-	; bit 5 of E toggles/changes
+	; bit 4 of E toggles/changes.
+	; Bit 4 == 8. Aka when bit 4 toggles, we've advanced >= 8 bytes.
+	; and since each tile is 8 bytes, we know we're on a new tile
 	ld	a, e
-	and	%00010000	; get bit 5 of E (and of DE in general)
-	ld	c, a	; store bit 5 of DE
-	ld	a, [rDE_BIT5]	; get last known bit 5 of DE
-	xor	c	; xor with DE's original bit5. If it's nonzero, then 
-			; bit 5 of DE was changed!
+	and	%00001000	; get bit 4 of E (and of DE in general)
+	ld	c, a	; store bit 4 of DE
+	ld	a, [rDE_BIT4]	; get last known bit 4 of DE
+	xor	c	; xor with DE's original bit4. If it's nonzero, then 
+			; bit 4 of DE was changed!
 	jp	z, .draw_sprite_row_loop	; jump if we didn't move to another tile
 .adjust_DE_to_top_of_tile_below
-	; if we get to here, we need to add 15 tiles' worth of bytes to DE
+	; if we get to here, we need to add 7 tiles' worth of bytes to DE
 	; to make up for the fact that DE just moved from bottom of one tile
 	; to top of tile on the right. (We want to move it so that it ends up
-	; at top of tile below it, instead). 15 x 16 (bytes per tile) = 240
+	; at top of tile below it, instead: so 8 tiles - 1 (because we're
+	; already 1 tile ahead)). 8-1 tiles x 8 bytes per tile = 7x8 = 56
 	ld	a, e	; load LSB of tile pointer
-	add	240
+	add	56
 	ld	e, a
 	if_flag	c,	inc d	; MSB + 1 if necessary
 	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
@@ -777,17 +793,11 @@ draw_pixel: MACRO
 .done_drawing_sprite
 	jp	chip8.pop_pc
 .draw_jumps_to_next_tile
-	; this does 2 things: 1) copy current row to next byte. This sets
-	; shading for this row to be mirrored (As gameboy uses 2 bytes in planar
-	; format for shading 8 pixels per tile).
-	; 2) jump to next tile's same row. Since each tile is 8 rows of 2 bytes
-	; each, we add 16 to our tile pointer
-	ld	a, [de]	; reload our new current tile row
-	inc	de
-	ld	[de], a	; set 2nd shading byte for pixel row
-	; now we need to add 15 (+1 already added with inc de) to de
-	ld	a, 15
-	add	e
+	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
+	; each, we add 8 to our tile pointer
+	; now we need to add 8
+	ld	a, e
+	add	8
 	ld	e, a
 	if_flag	c, inc	d
 	; [DE] now points to next tile's row
@@ -869,34 +879,32 @@ chip8_FXzz_decode:
 .chip8_FX29_I_eq_sprite_location_of_vx_char
 ; I equals location of font data pointed at by VX. In this case, we add
 ; VX to CHIP8_FONT. It's like a lookup table, so we need to scale VX by the
-; size of each font (4x5). So we must multiply VX * 20 then add to bottom of
-; font address to get pointer to correct font
-; (Wiki says multiply by 5 only)
+; size of each font (5 bytes). So we must multiply VX * 5 then add to bottom of
+; font address to get pointer to correct font (each font is 8x5 pixels)
 	ld	a, [$FF00+c]	; load VX
 	push	hl		; store PC
 	ld	l, a
 	xor	a
 	ld	h, a
 	; HL = $00AA (aka 1*A)
+	ldpair	bc, hl	; store A
 	add	hl, hl	; HL = 2A
 	add	hl, hl	; HL = 4A
-	ldpair	bc, hl	; store backup of 4*A
-	add	hl, hl	; HL = 8A
-	add	hl, hl	; HL = 16A
-	add	hl, bc	; HL = 20A
-	; HL is now 20 * VX
+	add	hl, bc	; HL = 5A
+	; HL is now 5 * VX
 	ld	de, CHIP8_FONT	; load location of fonts / graphics
+	; we'll add the scaled VX offset to CHIP8_FONT
+	add	e	; add VX offset to GFX LSB
 	ld	c, LOW(REG.I_LSB)
-	add	e	; add offset to LSB
 	ld	[$FF00+c], a	; store LSB of REG.I
 	IF (CHIP8_FONT && $00FF) != $00
 	; MSB increment is only necessary if it's possible. Here, we know that
 	; if the LSB is $00, adding just a byte ($FF) will never increment MSB
-		if_flag	c,	inc b	; add MSB offset to B
-		ld	a, b	; move MSB to A
-		dec	c	; CRITICAL. Point [C] to [REG.I]
-		ld	[$FF00+c], a	; store MSB of REG.I
+		if_flag	c,	inc d	; inc. MSB offset if LSB overflowed
 	ENDC
+	ld	a, d	; move MSB to A
+	dec	c	; CRITICAL. Point [C] to [REG.I]
+	ld	[$FF00+c], a	; store MSB of REG.I
 	jp	chip8.decode_opcode
 .chip8_FX33_store_vx_bcd_at_I
 	ld	a, [$FF00+c]	; get VX

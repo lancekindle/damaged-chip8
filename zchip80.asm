@@ -1050,12 +1050,17 @@ chip8_FXzz_decode:
 	ld	[$FF00+c], a	; set [X] to delay timer value
 	jp	chip8.decode_opcode
 .chip8_FX0A_vx_eq_key_pressed
-	ld	b, c	; move [X] to b
-	ld	c, LOW(KEY.ACTIVE)
-	ld	a, [$FF00+c]	; load active key
-	ld	c, b	; [c] points to [X]
+	bug_message	"... FX0A WAITING for keypress <^v>"
+	push	hl	; store PC
+	push	bc	; store b & [X]
+.wait4key
+	call	get_key_press
+	; WAIT for a keypress, then store in vx
+	ifa	==, -1, jr .wait4key
+	bug_message	"... FX0A vx eq key pressed (%A%)"
+	pop	bc	; c points to [X]
 	ld	[$FF00+c], a	; set [X] to active key value
-	jp	chip8.decode_opcode
+	jp	chip8.pop_pc
 .chip8_FX15_delay_timer_eq_vx
 	ld	a, [$FF00+c]	; load VX
 	bug_message	"... FX15 delay timer eq vx (%A%)"

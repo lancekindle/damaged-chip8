@@ -1105,21 +1105,13 @@ chip8_FXzz_decode:
 	; HL is now 5 * VX
 	ld	de, CHIP8_FONT	; load location of fonts / graphics
 	; we'll add the scaled VX offset to CHIP8_FONT
-	add	e	; add VX offset to GFX LSB
-	ld	c, LOW(REG.I_LSB)
-	ld	[$FF00+c], a	; store LSB of REG.I
-	IF (CHIP8_FONT && $00FF) != $00
-	; MSB increment is only necessary if it's possible. Here, we know that
-	; if the LSB is $00, adding just a byte ($FF) will never increment MSB
-		if_flag	c,	inc d	; inc. MSB offset if LSB overflowed
-	ENDC
-	ld	a, d	; move MSB to A
-	dec	c	; CRITICAL. Point [C] to [REG.I]
-	ld	[$FF00+c], a	; store MSB of REG.I
-	jp	chip8.decode_opcode
+	add	hl, de	; HL now equals address of vx char
+	bug_message	"... FX29 I == %HL%"
+	store_rpair_from_hl	REG.I	; overwrites A, C, HL
+	jp	chip8.pop_pc
 .chip8_FX33_store_vx_bcd_at_I
-	ld	a, [$FF00+c]	; get VX
 	push	hl	; preserve PC
+	ld	a, [$FF00+c]	; get VX
 	bug_message	"... FX33 store vx (%A%) bcd at I"
 	; convert binary value in A to unpacked BCD form into ABC, MSB->LSB
 	ld	l, a
@@ -1131,26 +1123,28 @@ chip8_FXzz_decode:
 	add	hl, bc	; 3x HL
 	; we now have 3*A stored in HL
 	ld	bc, .FX33_bcd_table
+	push	bc	; save bcd table address
 	add	hl, bc	; add bcd_table address to our 3*A.
 	ldpair	de, hl	; move bcd address to DE
 	; DE now points to the start of BCD representation of A
 	load_rpair_into_hl	REG.I	; overwrite A, C, HL
+	pop	bc	; restore bcd table address
 	; HL now points to where REG.I points
 	ld	a, [bc]	; load HUNDREDS bcd digit
+	bug_message	"... 100's digit (%A%) stored in %HL%"
 	ldi	[hl], a	; store hundreds digit at I, advance I pointer
 	inc	bc	; bc now points to tens digit
 	ld	a, [bc]	; load TENS bcd digit
+	bug_message	"... 10's digit (%A%) stored in %HL%"
 	ldi	[hl], a	; store tens digit at I+1, advance to I pointer
 	inc	bc	; bc now points to ones digit
+	ld	a, [bc]	; load ONES bcd digit
+	bug_message	"... 1's digit (%A%) stored in %HL%"
 	ldi	[hl], a	; store ones digit at I+2. I is +3'd now
 	; CRITICAL WARNING
 	; Do we update REG.I, or not?? Wiki doesn't say
-	; we assume (for now) that it DOES update. And that I changes at a
-	; rate of 1 per value written like similar routines in the
-	; $FXZZ address-space
-	store_rpair_from_hl	REG.I	; store +3'd REG.I
-	pop	hl	; restore PC @ next opcode
-	jp	chip8.decode_opcode
+	; Based on seeing source, we do NOT update reg.I
+	jp	chip8.pop_pc
 .FX33_bcd_table
 ; table for conversion between binary # and 3 bytes of BCD, where the order of
 ; digits is HUNDREDS, TENS, ONES digits
@@ -1186,15 +1180,16 @@ ONES = NUMBER % 10
 ._FX55_done
 	bug_message	"... FX55 dump ended at %HL%"
 	store_rpair_from_hl	REG.I	; store I
-	pop	hl	; restore PC
-	jp	chip8.decode_opcode
+	jp	chip8.pop_pc
 .chip8_FX65_load_v0_to_vx_at_I
 ; c holds [X]
 	push	hl	; preserve PC
 	load_rpair_into_hl	REG.I
 	bug_message	"... FX65 load v0 to vx at I (starting at %HL%)"
-	ld	b, c	; B is [X]
+	ld	a, c	; A is [X]
 	ld	c, LOW(REG.0)	; c is [REG.0]
+	sub	c	; A = REG.X - REG.0 (aka A = # of registers to copy)
+	ld	b, a	; B is difference in registers
 	; register B is now effectively a counter, since we copy from I to
 	; registers 0-X. If X == 0, we copy to 1 register (0). If X == 1, we
 	; copy to 2 registers (0-1)
@@ -1211,8 +1206,7 @@ ONES = NUMBER % 10
 ._FX65_done
 	bug_message	"... FX65 load ended with I at %HL%"
 	store_rpair_from_hl	REG.I	; store I
-	pop	hl	; restore PC
-	jp	chip8.decode_opcode
+	jp	chip8.pop_pc
 
 
 ; decrement TIMERs until they reach 0

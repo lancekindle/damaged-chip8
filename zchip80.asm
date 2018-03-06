@@ -6,7 +6,7 @@ include "gbhw.inc"	; wealth of gameboy hardware & addresses info
 ; Vertical-blank triggers each time the screen finishes drawing. Draw-To-Screen
 ; routines happen here because Video-RAM is only available during vblank*
 SECTION "Vblank", ROM0[$0040]
-	reti
+	jp	vblank_copy_tiles_buffer_to_vram
 
 ; LCDC interrupts are LCD-specific interrupts (not including vblank) such as
 ; interrupting when the gameboy draws a specific horizontal line on-screen
@@ -48,6 +48,7 @@ include "vars.asm"
 include "syntax.inc"
 include "debug.inc"
 include "memory.asm"
+include "lcd.asm"
 
 	var_HighRamByte	TIMER_DELAY
 	var_HighRamByte	TIMER_SOUND
@@ -76,6 +77,7 @@ include "memory.asm"
 	var_HighRamByte	rDE_BIT4	; specific variable for drawing
 	var_HighRamByte	jpad_rKeys
 	var_HighRamByte	jpad_rHexEncoded	; variables for keypad
+	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
 
 include "joypad.inc"
 CHIP8_BEGIN = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
@@ -201,6 +203,7 @@ init_variables:
 	ld	[jpad_rHexEncoded], a
 	ld	[TIMER_DELAY], a
 	ld	[TIMER_SOUND], a
+	ld	[vram_halfcopy_toggle], a
 	ld	a, -1
 	ld	[KEY.ACTIVE], a	; active key needs to be -1 (aka no active key)
 	ld	hl, CHIP8_CALL_STACK
@@ -217,10 +220,40 @@ copy_rom_to_ram:
 	call	mem_Copy
 	bug_message	"... end @ %DE%"
 	ret
+
+; setup screen to point to CHIP8 tiles
+screen_setup:
+	; tile 32 is blank
+	; initially set full screen to be blank
+	call	lcd_Stop
+	ld	a, 32	; a points to tile 32 -> a blank tile
+	ld	hl, _SCRN0
+	REPT	256
+		ldi	[hl], a
+	ENDR
+	; tiles 0-31 should display in a 4x8 tile fashion (4 high, 8 wide)
+	xor	a
+	ld	hl, _SCRN0
+	ld	bc, SCRN_VX_B - 8	; -8 because we are 8 tiles wide
+	REPT	4
+		REPT	8
+			ldi	[hl], a
+			inc	a
+		ENDR
+		; advance to next row
+		add	hl, bc
+	ENDR
+	call	lcd_On			; turn on lcd
+	call	lcd_ShowBackground	; show background
+	call	lcd_ScreenInit	; setup palletes and screen x,y
+	ret
+	
+
 code_begins:
 	di	; disable interrupts
 	ld	SP, $FFFF	; set stack to top of HRAM
 	call	init_variables
+	call	screen_setup
 	ld	a, IEF_VBLANK
 	ld	[rIE], a	; enable vblank interrupts
 	ei		; enable interrupts
@@ -240,6 +273,63 @@ chip8_not_implemented:
 .pop_pc	; for triggering a bug_break when PC has been pushed to stack
 	pop	hl	; pop PC into hl
 	jp	chip8_not_implemented
+
+
+; chip8's vram is a memory address labelled "display refresh" on the wiki
+; it exists in the 4k memory reserved for the CHIP8 game, top of the ram
+; portion. We copy those tiles to their appropriate VRAM locations (tiles 0-31)
+; during vblank
+vblank_copy_tiles_buffer_to_vram:
+	pushall
+	bug_message	"vblank beginning with %CLKS2VBLANK% clocks left"
+	; copy 1 byte from DE two times to 2 bytes @ HL
+	ld	a, [vram_halfcopy_toggle]
+	xor	1
+	ld	[vram_halfcopy_toggle], a
+	jp	z, .second_half
+.first_half
+	ld	de, CHIP8_DISPLAY_TILES
+	ld	hl, _VRAM
+	ld	b, 8	; 8 source bytes per tile (16 on destination side)
+	; we use REPT instead of a mem_Copy routine for speed
+.copy_loop1
+	; CRITICAL	(this should be 32, but it overruns its time limit)
+	REPT	16	; 32 tiles
+		ld	a, [de]
+		ldi	[hl], a
+		ldi	[hl], a	; copy 8byte tile to 16byte tile
+		inc	de	; advance to next source byte
+	ENDR
+	dec	b
+	jp	nz, .copy_loop1
+.done1
+	ld	a, [rLY]	; get lcd Y coordinate (just check)
+	bug_message	"copying done. %CLKS2VBLANK% clocks left"
+	bug_message	"rLY=%A%... in trouble if > 0"
+	popall
+	jp	vblank_handle_timers	; this'll return and enable interrupts
+.second_half
+	ld	de, CHIP8_DISPLAY_TILES + 128
+	ld	hl, _VRAM + 256
+	ld	b, 8	; 8 source bytes per tile (16 on destination side)
+	; we use REPT instead of a mem_Copy routine for speed
+.copy_loop2
+	; CRITICAL	(this should be 32, but it overruns its time limit)
+	REPT	16	; 32 tiles
+		ld	a, [de]
+		ldi	[hl], a
+		ldi	[hl], a	; copy 8byte tile to 16byte tile
+		inc	de	; advance to next source byte
+	ENDR
+	dec	b
+	jp	nz, .copy_loop1
+.done2
+	ld	a, [rLY]	; get lcd Y coordinate (just check)
+	bug_message	"copying done. %CLKS2VBLANK% clocks left"
+	bug_message	"rLY=%A%... in trouble if > 0"
+	popall
+	jp	vblank_handle_timers	; this'll return and enable interrupts
+
 
 
 chip8:
@@ -322,7 +412,7 @@ chip8_00E0_disp_clear:
 
 	ld	hl, CHIP8_DISPLAY_TILES
 	xor	a
-	ld	b, 16
+	ld	b, 8
 .clear_loop
 	REPT 32	; repeat once per tile to copy
 		ldi	[hl], a	; write 0 to tiles
@@ -1113,7 +1203,7 @@ ONES = NUMBER % 10
 
 
 ; decrement TIMERs until they reach 0
-vblank_handler:
+vblank_handle_timers:
 	push	AF
 	ldh	a, [TIMER_DELAY]
 	or	a

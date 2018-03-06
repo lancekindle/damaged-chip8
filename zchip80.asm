@@ -160,7 +160,7 @@ store_rpair_from_hl: MACRO
 
 ; pushes chip8's PC onto chip8's stack.
 ; SP += 2
-; uses A, BC, DE, HL
+; uses A, C, DE, HL
 ; trashes chip8's PC from registers (be sure that in-ram value is valid)
 push_pc_to_chip8_stack: MACRO
 	ldpair	de, hl	; load PC into DE
@@ -203,7 +203,7 @@ code_begins:
 chip8_not_implemented:
 	bug_break	"function not implemented"
 	jp	chip8.decode_opcode
-.pop_pc
+.pop_pc	; for triggering a bug_break when PC has been pushed to stack
 	pop	hl	; pop PC into hl
 	jp	chip8_not_implemented
 
@@ -222,6 +222,7 @@ chip8:
 ; assume that [HL] points to next ROM location. AKA HL is the chip8's PC.
 ; Bytes are stored big-endian so we load MSB first, and compare to determine
 ; which instruction to run
+	bug_message	"NEXT OPCODE AT %HL%"
 	ldi	a, [HL]	; HL will point to LSB of opcode
 	ifa	>=, HIGH($9000),	jp .decode_9xxx_or_more
 .decode_8xxx_or_less
@@ -264,6 +265,7 @@ chip8_0NNN_call_RC1802:
 chip8_00E0_disp_clear:
 ; HL points to beginning of its own opcode, so we need to increment twice to
 ; arrive at next opcode
+	bug_message	"00E0_disp_clear"
 	inc	hl
 	inc	hl	; HL points to next opcode
 	push	hl	; save PC
@@ -290,6 +292,7 @@ chip8_00E0_disp_clear:
 chip8_00EE_return:
 ; return from chip8 subroutine. So we need to restore PC from chip8's stack
 	pop_pc_from_chip8_stack		; restores PC to HL
+	bug_message	"00EE_return to %HL%"
 	jp	chip8.decode_opcode	; decode next opcode from restored PC
 
 
@@ -297,10 +300,12 @@ chip8_1NNN_jump:
 ; jump to address MSB, LSB. (aka set PC to address in memory)
 ; A already holds $1N (MSB), HL points to $NN (LSB of PC)
 	and	$0F	; apply mask to get $0N
+	bug_message	"1NNN_jump from %HL%"
 	ld	c, [hl]	; load $NN in c
 	ld	b, a	; BC now contains new PC offset ($0NNN)
 	ld	hl, CHIP8_BEGIN
 	add	hl, bc	; add address offset to make PC valid
+	bug_message	"... by $0NNN (%BC%) to --> %HL%"
 	jp	chip8.decode_opcode	; decode next opcode from new PC
 
 chip8_2NNN_call:
@@ -315,6 +320,7 @@ chip8_2NNN_call:
 	pop	bc
 	ld	hl, CHIP8_BEGIN	; load CHIP8 offset
 	add	hl, bc	; add CHIP8 offset to address
+	bug_message	"2NNN_call %HL% (offset of %BC%)"
 	; jump to new PC since we've pushed previous PC to chip8's stack
 	jp	chip8.decode_opcode
 
@@ -323,9 +329,11 @@ chip8_2NNN_call:
 chip8_3XNN_skip_if_vx_eq_nn:
 ; A contains $3X. HL points to LSB, which is NN
 	and	$0F	; get X reg. offset
+	bug_message	"3XNN skip if v%A% == "
 	add	LOW(REG.0)	; get LSB of X reg. memory address
 	ld	c, a	; [$FF00+c] is now [X]
 	ldi	a, [hl]	; HL now points to next opcode
+	bug_message	"... %A%"
 	ld	b, a	; b stores NN
 	ld	a, [$FF00+c]
 	; twice increment HL if B (NN) == A (VX). (x2 inc hl skips next opcode)
@@ -336,9 +344,11 @@ chip8_3XNN_skip_if_vx_eq_nn:
 chip8_4XNN_skip_if_vx_not_eq_nn:
 ; A contains $4X. HL now points to LSB, which is NN
 	and	$0F	; get X reg. offset
+	bug_message	"4XNN skip if v%A% not =="
 	add	LOW(REG.0)	; get LSB of X reg. memory address
 	ld	c, a	; [$FF00+c] is now pointer to X register
 	ldi	a, [hl]	; HL now points to next opcode
+	bug_message	"... %A%"
 	ld	b, a	; b stores NN
 	ld	a, [$FF00+c]
 	; twice increment HL if B (NN) != A (VX). (x2 inc hl skips next opcode)
@@ -349,12 +359,14 @@ chip8_4XNN_skip_if_vx_not_eq_nn:
 chip8_5XY0_skip_if_vx_eq_vy:
 ; A contains $5X. HL nowpoints to LSB, which is $Y0
 	and	$0F	; get X reg. offset
+	bug_message	"5XY0 skip if v%A% =="
 	add	LOW(REG.0)	; get LSB of X reg. mem address
 	ld	c, a	; [X] stored in C
 	ld	a, [$FF00+c]	; get VX
 	ld	b, a		; store VX in B
 	ldi	a, [hl]	; get $Y0 and HL now points to next opcode
 	and	$F0	; get Y reg. offset
+	bug_message	"... v%A%"
 	swap	a	;swap nibbles to get $0Y
 	add	LOW(REG.0)	; get LSB of Y reg. memory address
 	ld	c, a	; [Y] stored in C
@@ -368,9 +380,11 @@ chip8_5XY0_skip_if_vx_eq_vy:
 chip8_6XNN_set_vx_to_nn:
 ; HL points to NN, A contains $6X
 	and	$0F		; get register X offset
+	bug_message	"6XNN set v%A% to "
 	add	LOW(REG.0)	; get LSB of reg. X memory address
 	ld	c, a		; stow [X] in c
 	ldi	a, [hl]	; A = NN. [HL] now points to next opcode
+	bug_message	"... %A%"
 	ld	[$FF00+c], a
 	jp	chip8.decode_opcode
 
@@ -378,10 +392,13 @@ chip8_6XNN_set_vx_to_nn:
 chip8_7XNN_add_nn_to_vx:
 ; HL points to NN, contains $7X
 	and	$0F		; get reg. X offset
+	bug_message	"7XNN add ... to v%A%"
 	add	LOW(REG.0)	; get LSB of reg. X memory address
 	ld	c, a		; stow [X]
 	ld	a, [$FF00+c]	; get VX
+	bug_message	"... vX prev == %A%"
 	add	[hl]	; add NN to VX
+	bug_message	"... vX now == %A%"
 	inc	hl	; HL now points to next opcode
 	ld	[$FF00+c], a	; store VX + NN in [X]
 	jp	chip8.decode_opcode
@@ -389,6 +406,7 @@ chip8_7XNN_add_nn_to_vx:
 chip8_decode_8xyz:
 ; HL points to LSB of opcode
 ; A holds 8X
+	bug_message	"8xyz"
 	and	$0F	; mask to get X register
 	add	LOW(REG.0)	; add REG.0 offset
 	ld	b, a	; store [X] in B
@@ -420,6 +438,7 @@ chip8_decode_8xyz:
 	ld	b, a		; store VY in B
 	ld	a, [$FF00+c]	; load VX in A
 	; now: A holds VX, B holds VY, C holds [X]
+	bug_message	"8xyz => 8%A%%B%z"
 	jp	hl	; jump to decoded 8xy# routine
 .vector_table
 ; vector table contains 16-bit memory address of subroutines 0-F. Simply add
@@ -511,6 +530,7 @@ chip8_decode_8xyz:
 
 chip8_9XY0_skip_if_vx_not_eq_vy:
 ; A contains $9X, HL points to $Y0
+	bug_message	"9xy0 skip if vx not eq vy"
 	and	$0F	; get X register offset from $9X
 	add	LOW(REG.0)	; get LSB of [X]
 	ld	c, a	; store [X]
@@ -537,6 +557,7 @@ chip8_ANNN_set_index_nnn:
 	push	hl
 	ld	hl, CHIP8_BEGIN
 	add	hl, bc	; add CHIP8 offset. Otherwise REG.I will not be valid
+	bug_message	"ANNN set index += %BC% aka %HL%"
 	store_rpair_from_hl	REG.I
 	pop	hl	; restore PC
 	jp	chip8.decode_opcode
@@ -549,6 +570,7 @@ chip8_BNNN_jump_0NNN_plus_v0:
 	ld	h, a
 	; HL now contains $0NNN
 	ld	c, LOW(REG.0)
+	bug_message	"BNNN jump %HL% plus REG.%C%"
 	ld	a, [$FF00+c]	; load v0
 	ld	c, a
 	xor	a	; zero A
@@ -557,12 +579,14 @@ chip8_BNNN_jump_0NNN_plus_v0:
 	add	hl, bc	; add V0 to $0NNN
 	ld	de, CHIP8_BEGIN
 	add	hl, de	; add chip8 rom offset
+	bug_message	"... HL + %C% + CHIP8-rom @ %DE%--> %HL%"
 	; HL now contains new PC from jump
 	jp	chip8.decode_opcode
 
 ; AND $NN with a random number, store in VX
 chip8_CXNN_vx_eq_nn_and_random:
 ; A contains $CX, HL points to NN
+	bug_message	"CXNN vx eq nn + random"
 	and	$0F	; get X register offset
 	add	LOW(REG.0)	; add to REG.0
 	ld	c, a	; c holds [X]
@@ -604,24 +628,30 @@ chip8_DXYN_draw_sprite_xy_n_high:
 ; memory address (-adjustments for bottom vs top of tile)
 ;==
 ; A contains $DX, [HL] points to $YN
+	bug_message	"DXYN drawing begins"
 	and	$0F	; mask to get $0X offset
+	bug_message	"... X -> REG.%A%"
 	add	LOW(REG.0)	;add REG.0 to offset
 	ld	c, a	; [X] in [C]
 	ld	a, [$FF00+c]	; get VX
+	bug_message	"... vX = %A%"
 	ld	b, a	; store VX
 	ld	a, [hl]	; get $YN, but do NOT increment HL.
 	; (we will re-read $YN to get $0N later)
 	and	$F0	; mask to get $Y0
 	swap	a	; swap to get $0Y
+	bug_message	"... Y -> %A%"
 	add	LOW(REG.0)	; add REG.0 to offset to get full address
 	ld	c, a
 	ld	a, [$FF00+c]	; get VY
+	bug_message	"... vY = %A%"
 	ld	c, a	; store VY in C
 	; BC contains $VX,VY   where VX = value of [X], and VY = value of [Y]
 	; [HL] points to $YN (so we can get height)
 	ldi	a, [hl]	; load $YN. HL now points to next opcode
 	push	hl	; store next opcode pointer
 	and	$0F	; get $0N
+	bug_message	"... $0N = %A%"
 	push	af	; preserve $0N
 .get_Y_tile_offset
 	; DE will point to tile 0. Each tile is 8x8 pixels, 8 bytes per tile
@@ -651,6 +681,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 			; pixel row of tile. BUT it does not yet point to
 			; correct tile COLUMN
 	push	hl	; store Y-corrected version of tile-adjusted address
+	bug_message	"... y tile offset=%HL%"
 .get_X_tile_offset
 	; now we need to get tile offset according to X coordinates
 	; which since each tile is 8 pixels wide
@@ -662,17 +693,20 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	and	%11111000
 	ld	l, a
 	ld	h, 0	; VX ==> [HL] now contains X offset
+	bug_message	"... x tile offset=%HL%"
 	pop	de	; pop Y tile's offset
 	add	hl, de	; add Y's offset to X's offset
 	ld	de, CHIP8_DISPLAY_TILES	; this is where this routine draws
 					; during vblank this is copied to VRAM
 	add	hl, de	; add (tile) offset. Now HL points to correct
+	bug_message	"... correct tile address=%HL%"
 	; tile (via row, column), and the correct pixel row within the correct
 	; tile
 	; but the correct pixel within the correct row? that will be pointed at
 	; by a pixel mask
 	ldpair	de, hl	; load tile pointer into DE
 	load_rpair_into_hl	REG.I	; overwrites A, HL
+	bug_message	"... sprite to begin drawing from %HL% to %DE%"
 .get_bitmask
 	; now GET that PIXEL BITMASK!
 	; VX is not fully accounted for. Within the correct tile, and the
@@ -825,6 +859,7 @@ chip8_EXzz_decode:
 chip8_FXzz_decode:
 ; A holds $FX, HL points to $ZZ (can be several variants)
 	and	$0F	; get X register offset
+	bug_message	"FXzz (F%A%zz)"
 	add	LOW(REG.0)	; get [x] register
 	ld	c, a	; c holds [x]
 	ldi	a, [hl]	; A = $??, HL points to next opcode
@@ -838,12 +873,13 @@ chip8_FXzz_decode:
 	ifa	==, $55,	jp .chip8_FX55_dump_v0_to_vx_at_I
 	ifa	==, $65,	jp .chip8_FX65_load_v0_to_vx_at_I
 ; if none match, show error
-	bug_break	"FX%A% not implemented"
+	bug_break	"... FX%A% not implemented ERROR !@#$%"
 ; at this point, C holds [X], HL points to next opcode
 .chip8_FX07_vx_eq_delay_timer
 	ld	b, c	; move [X] to b
 	ld	c, LOW(TIMER_DELAY)
 	ld	a, [$FF00+c]	; load delay timer value
+	bug_message	"... FX07 vx eq delay timer (%A%)"
 	ld	c, b	; [c] points to [X]
 	ld	[$FF00+c], a	; set [X] to delay timer value
 	jp	chip8.decode_opcode
@@ -856,16 +892,19 @@ chip8_FXzz_decode:
 	jp	chip8.decode_opcode
 .chip8_FX15_delay_timer_eq_vx
 	ld	a, [$FF00+c]	; load VX
+	bug_message	"... FX15 delay timer eq vx (%A%)"
 	ld	c, LOW(TIMER_DELAY)	; [c] points to [TIMER_DELAY]
 	ld	[$FF00+c], a	; load TIMER_DELAY with VX
 	jp	chip8.decode_opcode
 .chip8_FX18_sound_timer_eq_vx
 	ld	a, [$FF00+c]	; load VX
+	bug_message	"... FX18 sound timer eq vx (%A%)"
 	ld	c, LOW(TIMER_SOUND)	; [c] points to [TIMER_SOUND]
 	ld	[$FF00+c], a	; load TIMER_SOUND with VX
 	jp	chip8.decode_opcode
 .chip8_FX1E_add_vx_to_I
 	ld	a, [$FF00+c]	; load VX
+	bug_message	"... FX1E add vx (%A%) to I"
 	push	hl	; store PC
 	ld	hl, REG.I_LSB
 	add	[hl]	; add LSB of I to VX
@@ -882,6 +921,7 @@ chip8_FXzz_decode:
 ; size of each font (5 bytes). So we must multiply VX * 5 then add to bottom of
 ; font address to get pointer to correct font (each font is 8x5 pixels)
 	ld	a, [$FF00+c]	; load VX
+	bug_message	"... FX29 I eq sprite location of vx char (%A%)"
 	push	hl		; store PC
 	ld	l, a
 	xor	a
@@ -909,6 +949,7 @@ chip8_FXzz_decode:
 .chip8_FX33_store_vx_bcd_at_I
 	ld	a, [$FF00+c]	; get VX
 	push	hl	; preserve PC
+	bug_message	"... FX33 store vx (%A%) bcd at I"
 	; convert binary value in A to unpacked BCD form into ABC, MSB->LSB
 	ld	l, a
 	xor	a
@@ -957,6 +998,7 @@ ONES = NUMBER % 10
 ; c holds [X]
 	push	hl	; preserve PC
 	load_rpair_into_hl	REG.I
+	bug_message	"... FX55 dump v0 to vx at I (starting at %HL%)"
 	ld	b, c	; B is [X]
 	ld	c, LOW(REG.0)	; c is [REG.0]
 	; register B is now effectively a counter, since we copy from registers
@@ -971,6 +1013,7 @@ ONES = NUMBER % 10
 	dec	b	; check if we have more registers to copy
 	jr	nz, ._FX55_dump_loop
 ._FX55_done
+	bug_message	"... FX55 dump ended at %HL%"
 	store_rpair_from_hl	REG.I	; store I
 	pop	hl	; restore PC
 	jp	chip8.decode_opcode
@@ -978,6 +1021,7 @@ ONES = NUMBER % 10
 ; c holds [X]
 	push	hl	; preserve PC
 	load_rpair_into_hl	REG.I
+	bug_message	"... FX65 load v0 to vx at I (starting at %HL%)"
 	ld	b, c	; B is [X]
 	ld	c, LOW(REG.0)	; c is [REG.0]
 	; register B is now effectively a counter, since we copy from I to
@@ -994,6 +1038,7 @@ ONES = NUMBER % 10
 	dec	b	; check if we have more registers to copy to
 	jr	nz, ._FX65_restore_loop
 ._FX65_done
+	bug_message	"... FX65 load ended with I at %HL%"
 	store_rpair_from_hl	REG.I	; store I
 	pop	hl	; restore PC
 	jp	chip8.decode_opcode

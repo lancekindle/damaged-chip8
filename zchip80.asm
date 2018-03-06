@@ -195,10 +195,40 @@ pop_pc_from_chip8_stack: MACRO
 	pop	hl	; HL is now restored PC
 	ENDM
 
+init_variables:
+	xor	a
+	ld	[jpad_rKeys], a
+	ld	[jpad_rHexEncoded], a
+	ld	[TIMER_DELAY], a
+	ld	[TIMER_SOUND], a
+	ld	a, -1
+	ld	[KEY.ACTIVE], a	; active key needs to be -1 (aka no active key)
+	ld	hl, CHIP8_CALL_STACK
+	store_rpair_from_hl	REG.SP	; set SP to CHIP8_CALL_STACK. 96 bytes to grow
+	ret
 
+copy_rom_to_ram:
+	; eventually I'll make this a macro so I can specify which rom to copy
+	; for now we always copy pong rom
+	ld	hl, rom_pong
+	ld	bc, rom_pong_end - rom_pong
+	ld	de, CHIP8_PC_BEGIN
+	bug_message	"copying rom %HL% -> %DE% (size %BC%)"
+	call	mem_Copy
+	bug_message	"... end @ %DE%"
+	ret
 code_begins:
 	di	; disable interrupts
 	ld	SP, $FFFF	; set stack to top of HRAM
+	call	init_variables
+	ld	a, IEF_VBLANK
+	ld	[rIE], a	; enable vblank interrupts
+	ei		; enable interrupts
+	di
+	call	copy_rom_to_ram
+	ei
+	ld	hl, CHIP8_PC_BEGIN - 2
+	jp	chip8_00E0_disp_clear	; x2 increments HL & clears screen
 .loop
 	halt	; halts cpu until interrupt triggers
 	nop
@@ -1102,3 +1132,11 @@ vblank_handler:
 	pop	AF
 	reti
 
+rom_pong:
+	DB	$60,7	; load V0 (X) with 5
+	DB	$61,2	; load V1 (Y) with 15
+	DB	$62,$0F	; load V2 (character) with F
+	DB	$F2,$29	; set index = REG.2's char
+	DB	$D0,$16	; draw character for N-length
+	DB	$F1,$0A	; wait for a keypress
+rom_pong_end:

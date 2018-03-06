@@ -74,6 +74,10 @@ include "memory.asm"
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
 	var_HighRamByte	rDE_BIT4	; specific variable for drawing
+	var_HighRamByte	jpad_rKeys
+	var_HighRamByte	jpad_rHexEncoded	; variables for keypad
+
+include "joypad.inc"
 CHIP8_BEGIN = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
 			; including registers, rom, stack, graphics, etc.
 CHIP8_FONT = CHIP8_BEGIN	; $D000-$D200 (512bytes) are reserved for fonts/gfx
@@ -839,20 +843,45 @@ draw_pixel: MACRO
 	ret
 
 
+; keycode instructions: check how VX relates to pressed key
 chip8_EXzz_decode:
+	bug_message	"EXzz keycodes"
 ; A holds $EX, HL points to $ZZ (either $9E or $A1)
 	and	$0F	; get [X] offset
 	add	LOW(REG.0)	; get register [X] address
 	ld	c, a	; c holds [X]
 	ldi	a, [hl]	; A=$9E or $A1, HL points to next opcode
 	ifa	==, $9E, jp .chip8_EX9E_skip_if_vx_eq_key
+	ifa	!=, $A1, bug_break "EX%A% not a valid opcode"
 ; skip next opcode if key stored in REG.X not equal to key pressed (if any)
 .chip8_EXA1_skip_if_vx_not_eq_key
-	bug_break	"not yet implemented"
-
+	; A holds $A1, C holds [X]
+	call	get_key_press
+	ld	b, a	; move keypress to b
+	ld	a, [$FF00+c]	; load vx
+	bug_message	"EXA1 skip if vx (%A%) not eq to key (%B%)"
+	ifa	!=, b, x2 inc hl	; skip next opcode
+	ifa	!=, b, bug_message "... next opcode skipped"
+	jp	chip8.decode_opcode
 ; skip next opcode if key pressed (0-F) equals VX
 .chip8_EX9E_skip_if_vx_eq_key
-	bug_break	"not yet implemented"
+	call	get_key_press
+	ld	b, a	; move keypress to b
+	ld	a, [$FF00+c]	; load vx
+	bug_message	"EX9E skip if vx (%A%) eq to key (%B%)"
+	ifa	==, b, x2 inc hl	; skip next opcode
+	ifa	==, b, bug_message "... next opcode skipped"
+	jp	chip8.decode_opcode
+
+
+; return keypress. 255 (-1) if none. 0-F if a key pressed
+get_key_press:
+	; arrow keys + A + B are keys to press
+	; start/select modify the keymappings such that
+	; the full 16 keys 0-F are represented when
+	; start or select or no modifier is held down
+	jpad_GetKeys	; a huge macro
+	ret
 
 
 

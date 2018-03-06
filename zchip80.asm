@@ -578,77 +578,77 @@ chip8_decode_8xyz:
 	ld	a, [$FF00+c]	; load VX in A
 	; now: A holds VX, B holds VY, C holds [X]
 	bug_message	"8xyz => 8%A%%B%z"
-	jp	hl	; jump to decoded 8xy# routine
+	jp	hl	; jump to decoded 8XY# routine
 .vector_table
 ; vector table contains 16-bit memory address of subroutines 0-F. Simply add
 ; subroutine # twice to vector_table address and load 16bit address from there
 ; into HL, then JP HL to begin the desired subroutine
 ; (this is NOT a jump table. A jump table contains the full "jp .addr" opcode)
-	DW	.xy0_vx_eq_vy
-	DW	.xy1_vx_eq_vx_or_vy
-	DW	.xy2_vx_eq_vx_and_vy
-	DW	.xy3_vx_eq_vx_xor_vy
-	DW	.xy4_add_vy_to_vx
-	DW	.xy5_sub_vy_from_vx
-	DW	.xy6_shift_vx_right
-	DW	.xy7_vx_eq_vy_minus_vx
-	DW	.xyz_not_implemented	; .xy8
-	DW	.xyz_not_implemented	; .xy9
-	DW	.xyz_not_implemented	; .xyA
-	DW	.xyz_not_implemented	; .xyB
-	DW	.xyz_not_implemented	; .xyC
-	DW	.xyz_not_implemented	; .xyD
-	DW	.xyE_shift_vx_left
-	DW	.xyz_not_implemented	; .xyF
+	DW	.chip8_8XY0_vx_eq_vy
+	DW	.chip8_8XY1_vx_eq_vx_or_vy
+	DW	.chip8_8XY2_vx_eq_vx_and_vy
+	DW	.chip8_8XY3_vx_eq_vx_xor_vy
+	DW	.chip8_8XY4_add_vy_to_vx
+	DW	.chip8_8XY5_sub_vy_from_vx
+	DW	.chip8_8XY6_shift_vx_right
+	DW	.chip8_8XY7_vx_eq_vy_minus_vx
+	DW	.chip8_8XYZ_not_implemented	; .88XY8
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XY9
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XYA
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XYB
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XYC
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XYD
+	DW	.chip8_8XYE_shift_vx_left
+	DW	.chip8_8XYZ_not_implemented	; .chip8_8XYF
 ; remember. At this point
 ; A => VX
 ; BC => VY, [X]
 ; PC has been pushed to gameboy stack
-.xyz_not_implemented
+.chip8_8XYZ_not_implemented
 ; we get here if it broke. gracefully print message and move to next opcode
 	ld	bc, .vector_table	; overwrite all values
 	negate	bc
 	add	hl, bc	; calculate vector_table offset (aka routine # ?)
-	bug_break	"8xy? routine called nonimplemented version: %HL%"
+	bug_break	"8XY? routine called nonimplemented version: %HL%"
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy0_vx_eq_vy
+.chip8_8XY0_vx_eq_vy
 	ld	a, b		; load VY into A
 	ld	[$FF00+c], a	; [X] = VY
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy1_vx_eq_vx_or_vy
+.chip8_8XY1_vx_eq_vx_or_vy
 	or	b
 	ld	[$FF00+c], a	; [X] = VX | VY
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy2_vx_eq_vx_and_vy
+.chip8_8XY2_vx_eq_vx_and_vy
 	and	b
 	ld	[$FF00+c], a	; [X] = VX & VY
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy3_vx_eq_vx_xor_vy
+.chip8_8XY3_vx_eq_vx_xor_vy
 	xor	b
 	ld	[$FF00+c], a	; [X] = VX ^ VY
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy4_add_vy_to_vx
+.chip8_8XY4_add_vy_to_vx	; VF set if overflow
 	add	b
 	ld	[$FF00+c], a	; [X] = VX + VY
 	ld	hl, REG.F		; <\
 	ld	[hl], 0			;   | set Carry if overflow
 	if_flag	c,	inc [hl]	; </
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy5_sub_vy_from_vx
+.chip8_8XY5_sub_vy_from_vx
 	sub	b
 	ld	[$FF00+c], a	; [X] = VX - VY
 	ld	hl, REG.F		; <\  clear Carry if overflow / borrow
 	ld	[hl], 1			;   | (subtraction is opposite to
 	if_flag	c,	dec [hl]	; </  addition concerning carry flag)
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy6_shift_vx_right
+.chip8_8XY6_shift_vx_right
 	srl	a	; rotate VX right
 	ld	[$FF00+c], a	; [X] = VX >> 1
 	ld	hl, REG.F		; <\
 	ld	[hl], 0			;   | VF = bit-value shifted out of VX
 	if_flag	c,	inc [hl]	; </
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xy7_vx_eq_vy_minus_vx
+.chip8_8XY7_vx_eq_vy_minus_vx
 ; beware the trap of using negate macro. Carry-flags are reversed, then
 	ld	e, a	; store VX
 	ld	a, b	; A = VY
@@ -658,7 +658,7 @@ chip8_decode_8xyz:
 	ld	[hl], 1			;   | (subtraction is opposite to
 	if_flag	c,	dec [hl]	; </  addition concerning carry flag)
 	jp	chip8.pop_pc	; return to next opcode, but first pop PC to HL
-.xyE_shift_vx_left
+.chip8_8XYE_shift_vx_left
 	sla	a	; rotate VX left
 	ld	[$FF00+c], a	; [X] = VX << 1
 	ld	hl, REG.F		; <\

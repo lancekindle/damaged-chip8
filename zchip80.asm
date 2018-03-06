@@ -901,7 +901,7 @@ draw_pixel: MACRO
 	ld	[de], a	; set VRAM pixel
 	ifa	<, c, SET_REG_F	; A < C if pixel was set to zero / toggled off
 .rotate_mask_\@
-	rlc	b	; rotate mask. If it rotates back to bit 7, we need to
+	rrc	b	; rotate mask. If it rotates back to bit 7, we need to
 			; jump to next tile (but copy current pixels byte
 			; to 2nd shading byte first)
 	call	c, .draw_jumps_to_next_tile	; also responsible for copying
@@ -1345,10 +1345,22 @@ hex_gfx_data:
 	generate_0_F_gfx
 hex_gfx_data_end:
 rom_pong:
-	DB	$60,7	; load V0 (X) with 5
-	DB	$61,2	; load V1 (Y) with 15
+	DB	$60,5	; load V0 (X) with 5
+	DB	$61,6	; load V1 (Y) with 6
+	; loaded x,y so that drawn characters span multiple tiles
 	DB	$62,$0F	; load V2 (character) with F
 	DB	$F2,$29	; set index = REG.2's char
-	DB	$D0,$16	; draw character for N-length
+	DB	$D0,$15	; draw character for N-length
+	; now letters down to A
+	DB	$72,$FF	; V2 += 255 (aka -1) = char E
+	DB	$F2,$29	; set index = REG.2's char
+	DB	$70,7	; move X coordinate to the right by 7
+	DB	$D0,$15	; draw E after the F
+	; draw another letter
+	DB	$72,$FF	; V2 += 255 (aka -1) = char D
+	DB	$F2,$29	; set index = REG.2's char
+	DB	$70,7	; move X coordinate to the right by 8
+	DB	$D0,$15	; draw next letter
+	; letters F E D should be drawn on screen
 	DB	$F1,$0A	; wait for a keypress
 rom_pong_end:

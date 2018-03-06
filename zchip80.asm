@@ -74,16 +74,16 @@ include "memory.asm"
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
 	var_HighRamByte	rDE_BIT4	; specific variable for drawing
-CHIP8_DATA = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
+CHIP8_BEGIN = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
 			; including registers, rom, stack, graphics, etc.
-CHIP8_FONT = CHIP8_DATA	; $D000-$D200 (512bytes) are reserved for fonts/gfx
+CHIP8_FONT = CHIP8_BEGIN	; $D000-$D200 (512bytes) are reserved for fonts/gfx
 CHIP8_FONT_END = CHIP8_FONT + $0200
 CHIP8_ROM = CHIP8_FONT_END	; actual rom data is loaded at address $D200
 CHIP8_PC_BEGIN = CHIP8_ROM 	; program counter begins here, where ROM begins
-CHIP8_CALL_STACK = CHIP8_DATA + $0EA0  ; call stack / variables: 96 bytes
+CHIP8_CALL_STACK = CHIP8_BEGIN + $0EA0  ; call stack / variables: 96 bytes
 CHIP8_DISPLAY_TILES = CHIP8_CALL_STACK + $0060	; $DF00 -> $DFFF
 						; holds tiles / display buffer
-CHIP8_DATA_END = CHIP8_DATA + $1000 ; $E000
+CHIP8_END = CHIP8_BEGIN + $1000 ; $E000
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
 ; (used for clearing screen)
@@ -297,9 +297,9 @@ chip8_1NNN_jump:
 ; jump to address MSB, LSB. (aka set PC to address in memory)
 ; A already holds $1N (MSB), HL points to $NN (LSB of PC)
 	and	$0F	; apply mask to get $0N
-	ld	l, [hl]
-	ld	h, a	; HL now contains new PC
-	ld	bc, CHIP8_ROM
+	ld	c, [hl]	; load $NN in c
+	ld	b, a	; BC now contains new PC offset ($0NNN)
+	ld	hl, CHIP8_BEGIN
 	add	hl, bc	; add address offset to make PC valid
 	jp	chip8.decode_opcode	; decode next opcode from new PC
 
@@ -310,10 +310,10 @@ chip8_2NNN_call:
 	ld	b, a	; load $0N to B
 	ldi	a, [hl]	; HL now points to next opcode after subroutine return
 	ld	c, a	; BC now contains $0NNN address to call
-	push	bc	; push PC address to "call"
+	push	bc	; push_pc uses A, C, DE, HL
 	push_pc_to_chip8_stack	; preserve PC (HL) on stack
-	pop	hl	; PC = subroutine address to call
-	ld	bc, CHIP8_ROM	; load CHIP8 offset
+	pop	bc
+	ld	hl, CHIP8_BEGIN	; load CHIP8 offset
 	add	hl, bc	; add CHIP8 offset to address
 	; jump to new PC since we've pushed previous PC to chip8's stack
 	jp	chip8.decode_opcode
@@ -527,7 +527,7 @@ chip8_9XY0_skip_if_vx_not_eq_vy:
 	ifa	!=, b,	x2 inc hl
 	jp	chip8.decode_opcode
 
-; set index to $0NNN + chip8_rom offset
+; set index to $0NNN + chip8_rom offset (actually chip8_data offset)
 chip8_ANNN_set_index_nnn:
 ; A contains $AN, HL points to $NN
 	and	$0F	; get $0N
@@ -535,7 +535,7 @@ chip8_ANNN_set_index_nnn:
 	ldi	a, [hl]	; get $NN, HL now points to next opcode
 	ld	c, a	; BC now holds $0NNN
 	push	hl
-	ld	hl, CHIP8_ROM
+	ld	hl, CHIP8_BEGIN
 	add	hl, bc	; add CHIP8 offset. Otherwise REG.I will not be valid
 	store_rpair_from_hl	REG.I
 	pop	hl	; restore PC
@@ -555,8 +555,8 @@ chip8_BNNN_jump_0NNN_plus_v0:
 	ld	b, a
 	; BC now contains $00VV (VV = V0 register value)
 	add	hl, bc	; add V0 to $0NNN
-	ld	bc, CHIP8_ROM
-	add	hl, bc	; add chip8 rom offset
+	ld	de, CHIP8_BEGIN
+	add	hl, de	; add chip8 rom offset
 	; HL now contains new PC from jump
 	jp	chip8.decode_opcode
 

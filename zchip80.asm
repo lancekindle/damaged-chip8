@@ -527,7 +527,7 @@ chip8_6XNN_set_vx_to_nn:
 	ld	[$FF00+c], a
 	jp	chip8.decode_opcode
 
-; set VX += NN
+; set VX += NN (carry flag is not changed)
 chip8_7XNN_add_nn_to_vx:
 ; HL points to NN, contains $7X
 	and	$0F		; get reg. X offset
@@ -792,6 +792,9 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	and	$0F	; get $0N
 	bug_message	"... $0N = %A%"
 	push	af	; preserve $0N
+	; reset VF (required at start of drawing operation)
+	xor	a
+	ldh	[REG.F], a
 .get_Y_tile_offset
 	; DE will point to tile 0. Each tile is 8x8 pixels, 8 bytes per tile
 	; CRITICAL. YES, 8 Bytes per tile. CHIP8 is B/W, so we store the tiles
@@ -1216,6 +1219,7 @@ vblank_handle_timers:
 	or	a
 	jr	z, .skip_delay_decrement
 	dec	a
+	bug_message	"delay timer--  => %A%"
 	ldh	[TIMER_DELAY], a
 .skip_delay_decrement
 	ldh	a, [TIMER_SOUND]

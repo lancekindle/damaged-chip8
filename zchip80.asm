@@ -807,9 +807,9 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	ld	l, a
 	ld	h, 0
 	; HL => A
-	ldpair	de, hl	; load a copy of A in DE
 	add	hl, hl	; HL = 2A
-	add	hl, de	; HL = 3A
+	add	hl, hl	; HL = 4A
+	add	hl, hl	; HL = 8A
 	; tadah. now [HL] points to correct tile row.
 	; (but not correct pixel row within tile)
 	ld	a, c	; restore VY
@@ -869,11 +869,12 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	case	==, 5, .endcase, ld	b, %00000100
 	case	==, 6, .endcase, ld	b, %00000010
 	case	==, 7, .endcase, ld	b, %00000001
+
 .endcase
 	pop	af	; restore $0N in A
 	; ASSUME here that B contains bitmask
 	; ASSUME that HL contains REG.I (so it's pointing to sprite to draw)
-	; ASSUME that [DE] points to _VRAM tile / pixel row
+	; ASSUME that [DE] points to CHIP8_DISPLAY / BUFFER tile / pixel row
 	; ASSUME that A contains N (height of sprite to be drawn)
 	inc	a
 	dec	a
@@ -925,12 +926,11 @@ draw_pixel: MACRO
 	; after all 8 pixels have been drawn, we ALWAYS have to rewind
 	; backwards one tile, then jump down one row on same tile
 	; so we subtract 8 (rewind 1 tile) from DE, then add 1 (jump 1 row
-	; down)
-	; (remember, two bytes per pixel row). So DE = DE - 8 + 1; DE -= 7
+	; down) So DE = DE - 8 + 1; DE -= 7
 	ld	a, e
 	sub	7
 	ld	e, a
-	; the above subtract 15 only causes an underflow if E < 15
+	; the above subtract 7 only causes an underflow if E < 7
 	if_flag	c,	dec d
 	;[DE] now points to next row's pixels (of tile)
 	; we need [HL] to point to next row of sprite's pixels
@@ -964,6 +964,8 @@ draw_pixel: MACRO
 	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
 	jp	.draw_sprite_row_loop
 .done_drawing_sprite
+	halt	; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
+	nop	; give time for the change to appear on-screen
 	jp	chip8.pop_pc
 .draw_jumps_to_next_tile
 	; jump to next tile's same row. Since each tile is 8 rows of 1 byte

@@ -211,6 +211,12 @@ init_variables:
 	ret
 
 copy_rom_to_ram:
+	; first copy hex / gfx display data
+	ld	hl, hex_gfx_data
+	ld	bc, hex_gfx_data_end - hex_gfx_data
+	ld	de, CHIP8_FONT
+	bug_message	"copying hex gfx %HL% -> %DE%"
+	call	mem_Copy
 	; eventually I'll make this a macro so I can specify which rom to copy
 	; for now we always copy pong rom
 	ld	hl, rom_pong
@@ -1222,6 +1228,117 @@ vblank_handle_timers:
 	pop	AF
 	reti
 
+; create graphic characters (5 rows of 4 pixels each) for use in first portion
+; of chip8 rom
+; NOTE: these characters are monochrome. Be sure to call the mem_CopyMono
+; when transferring to tiles
+generate_0_F_gfx: MACRO
+	PUSHO
+
+	OPT	b *	; map  (space) and *(star) to 0, 1, respectively
+; 0
+	DB	%****    
+	DB	%*  *    
+	DB	%*  *    
+	DB	%*  *    
+	DB	%****    
+; 1
+	DB	%  *     
+	DB	% **     
+	DB	%  *     
+	DB	%  *     
+	DB	% ***    
+; 2
+	DB	%****    
+	DB	%   *    
+	DB	%****    
+	DB	%*       
+	DB	%****    
+; 3
+	DB	%****    
+	DB	%   *    
+	DB	%****    
+	DB	%   *    
+	DB	%****    
+; 4
+	DB	%*  *    
+	DB	%*  *    
+	DB	%****    
+	DB	%   *    
+	DB	%   *    
+; 5
+	DB	%****    
+	DB	%*       
+	DB	%****    
+	DB	%   *    
+	DB	%****    
+; 6
+	DB	%****    
+	DB	%*       
+	DB	%****    
+	DB	%*  *    
+	DB	%****    
+; 7
+	DB	%****    
+	DB	%   *    
+	DB	%  *     
+	DB	% *      
+	DB	% *      
+; 8
+	DB	%****    
+	DB	%*  *    
+	DB	%****    
+	DB	%*  *    
+	DB	%****    
+; 9
+	DB	%****    
+	DB	%*  *    
+	DB	%****    
+	DB	%   *    
+	DB	%****    
+; A
+	DB	%****    
+	DB	%*  *    
+	DB	%****    
+	DB	%*  *    
+	DB	%*  *    
+; B
+	DB	%***     
+	DB	%*  *    
+	DB	%***     
+	DB	%*  *    
+	DB	%***     
+; C
+	DB	%****    
+	DB	%*       
+	DB	%*       
+	DB	%*       
+	DB	%****    
+; D
+	DB	%***     
+	DB	%*  *    
+	DB	%*  *    
+	DB	%*  *    
+	DB	%***     
+; E
+	DB	%****    
+	DB	%*       
+	DB	%****    
+	DB	%*       
+	DB	%****    
+; F
+	DB	%****    
+	DB	%*       
+	DB	%****    
+	DB	%*       
+	DB	%*       
+
+	POPO
+	ENDM
+
+hex_gfx_data:
+	generate_0_F_gfx
+hex_gfx_data_end:
 rom_pong:
 	DB	$60,7	; load V0 (X) with 5
 	DB	$61,2	; load V1 (Y) with 15

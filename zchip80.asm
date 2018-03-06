@@ -262,7 +262,16 @@ chip8:
 
 
 chip8_0NNN_call_RC1802:
-	bug_break	"unimplemented feature: RC1802 program"
+; A contains $0N
+; [hl] points to $NN
+	ld	b, a
+	ldi	a, [hl]	; HL points to next opcode
+	ld	c, a
+	push	hl
+	ld	hl, CHIP8_ROM
+	add	hl, bc	; get new address to call
+	bug_message	"unimplemented feature: call RC1802 program @ %HL%"
+	jp	chip8.pop_pc
 
 
 ; clear screen by setting all relevant tiles to 0. Each "write" takes 2 cycles

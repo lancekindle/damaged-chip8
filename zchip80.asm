@@ -81,7 +81,7 @@ include "lcd.asm"
 	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
 
 include "joypad.inc"
-CHIP8_BEGIN = $D000	; 4KB of memory for chip8 data [$D000 - $E000]
+CHIP8_BEGIN = $C000	; 4KB of memory for chip8 data [$D000 - $E000]
 			; including registers, rom, stack, graphics, etc.
 CHIP8_FONT = CHIP8_BEGIN	; $D000-$D200 (512bytes) are reserved for fonts/gfx
 CHIP8_FONT_END = CHIP8_FONT + $0200
@@ -235,9 +235,13 @@ screen_setup:
 	call	lcd_Stop
 	ld	a, 32	; a points to tile 32 -> a blank tile
 	ld	hl, _SCRN0
-	REPT	256
+	ld	b, 16
+.fill_with_blank
+	REPT	64
 		ldi	[hl], a
 	ENDR
+	dec	b
+	jr	nz, .fill_with_blank
 	; tiles 0-31 should display in a 4x8 tile fashion (4 high, 8 wide)
 	xor	a
 	ld	hl, _SCRN0
@@ -263,8 +267,6 @@ code_begins:
 	call	screen_setup
 	ld	a, IEF_VBLANK
 	ld	[rIE], a	; enable vblank interrupts
-	ei		; enable interrupts
-	di
 	call	copy_rom_to_ram
 	ei
 	ld	hl, CHIP8_PC_BEGIN - 2
@@ -968,8 +970,18 @@ draw_pixel: MACRO
 	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
 	jp	.draw_sprite_row_loop
 .done_drawing_sprite
-	halt	; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
-	nop	; give time for the change to appear on-screen
+	ldh	a, [REG.F]
+	; it appears that drawing dictates the speed of the game. So not
+	; pausing "overspeeds" the game. But pausing after every draw causes
+	; sprites to flicker. On CRT / bleeding screens, this is OK, since
+	; the sprites will be more gray instead of pure black / white.
+	; So my compromise (for now) is to pause only when F flag is unset
+	; Most sprite movements are two draws: erase, then update and draw
+	; so if I only pause on the update and draw time, it's less likely
+	; to catch the flickering of sprites.
+	; BUT ITS ALSO PROBABLY GOING TO INTRODUCE SPORADIC SPEEDUPS IN GAME.
+	;halt
+	ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
 .draw_jumps_to_next_tile
 	; jump to next tile's same row. Since each tile is 8 rows of 1 byte

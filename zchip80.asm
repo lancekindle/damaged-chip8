@@ -1,4 +1,5 @@
 include "gbhw.inc"	; wealth of gameboy hardware & addresses info
+verbose	= 1	; uncomment to enable verbose (all bug_messages) output
 
 ;-------------- INTERRUPT VECTORS ------------------------
 ; specific memory addresses are called when a hardware interrupt triggers

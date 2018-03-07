@@ -45,12 +45,14 @@ debug_inc	set	1
 ;   DebugMsgWindow=1    # to output to bgb's debug window (only when shown)
 ; )
 bug_message: MACRO
+	IF	DEF(verbose)
 	ld	d, d	; "magic bytes" indicating "debug" message here
 	jr .end\@
 	DW $6464
 	DW $0000
 	DB \1
 .end\@
+	ENDC
 	ENDM
 
 ; call this macro to automatically break / halt execution when this instruction

@@ -532,7 +532,7 @@ chip8_6XNN_set_vx_to_nn:
 
 ; set VX += NN (carry flag is not changed)
 chip8_7XNN_add_nn_to_vx:
-; HL points to NN, contains $7X
+; HL points to NN, A contains $7X
 	and	$0F		; get reg. X offset
 	bug_message	"7XNN add ... to v%A%"
 	add	LOW(REG.0)	; get LSB of reg. X memory address
@@ -1184,8 +1184,10 @@ ONES = NUMBER % 10
 	push	hl	; preserve PC
 	load_rpair_into_hl	REG.I
 	bug_message	"... FX55 dump v0 to vx at I (starting at %HL%)"
-	ld	b, c	; B is [X]
+	ld	a, c	; a holds [X]
 	ld	c, LOW(REG.0)	; c is [REG.0]
+	sub	c	; A now holds [X] - [0] aka # of registers to copy
+	ld	b, a	; b holds # of registers
 	; register B is now effectively a counter, since we copy from registers
 	; 0-X. If X == 0, we copy 1 register (0). If X == 1, we copy 2
 	; registers. (0-1)
@@ -1204,7 +1206,7 @@ ONES = NUMBER % 10
 .chip8_FX65_load_v0_to_vx_at_I
 ; c holds [X]
 	push	hl	; preserve PC
-	load_rpair_into_hl	REG.I
+	load_rpair_into_hl	REG.I	; overwrites A, HL
 	bug_message	"... FX65 load v0 to vx at I (starting at %HL%)"
 	ld	a, c	; A is [X]
 	ld	c, LOW(REG.0)	; c is [REG.0]
@@ -1252,8 +1254,6 @@ vblank_handle_timers:
 
 ; create graphic characters (5 rows of 4 pixels each) for use in first portion
 ; of chip8 rom
-; NOTE: these characters are monochrome. Be sure to call the mem_CopyMono
-; when transferring to tiles
 generate_0_F_gfx: MACRO
 	PUSHO
 

@@ -1009,7 +1009,9 @@ chip8_EXzz_decode:
 ; skip next opcode if key stored in REG.X not equal to key pressed (if any)
 .chip8_EXA1_skip_if_vx_not_eq_key
 	; A holds $A1, C holds [X]
-	call	get_key_press
+	push	bc
+	call	get_key_press	; overwrites A,B,C?
+	pop	bc
 	ld	b, a	; move keypress to b
 	ld	a, [$FF00+c]	; load vx
 	bug_message	"EXA1 skip if vx (%A%) not eq to key (%B%)"
@@ -1018,7 +1020,9 @@ chip8_EXzz_decode:
 	jp	chip8.decode_opcode
 ; skip next opcode if key pressed (0-F) equals VX
 .chip8_EX9E_skip_if_vx_eq_key
-	call	get_key_press
+	push	bc
+	call	get_key_press	; overwrites A,B,C?
+	pop	bc
 	ld	b, a	; move keypress to b
 	ld	a, [$FF00+c]	; load vx
 	bug_message	"EX9E skip if vx (%A%) eq to key (%B%)"

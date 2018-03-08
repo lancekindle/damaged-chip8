@@ -1130,6 +1130,7 @@ chip8_FXzz_decode:
 	store_rpair_from_hl	REG.I	; overwrites A, C, HL
 	jp	chip8.pop_pc
 .chip8_FX33_store_vx_bcd_at_I
+	; C holds [X]. HL points to next opcode
 	push	hl	; preserve PC
 	ld	a, [$FF00+c]	; get VX
 	bug_message	"... FX33 store vx (%A%) bcd at I"
@@ -1143,12 +1144,10 @@ chip8_FXzz_decode:
 	add	hl, bc	; 3x HL
 	; we now have 3*A stored in HL
 	ld	bc, .FX33_bcd_table
-	push	bc	; save bcd table address
 	add	hl, bc	; add bcd_table address to our 3*A.
-	ldpair	de, hl	; move bcd address to DE
-	; DE now points to the start of BCD representation of A
-	load_rpair_into_hl	REG.I	; overwrite A, C, HL
-	pop	bc	; restore bcd table address
+	ldpair	bc, hl	; move bcd address (+ offset) to BC
+	; BC now points to the start of BCD representation of A
+	load_rpair_into_hl	REG.I	; overwrite A, HL
 	; HL now points to where REG.I points
 	ld	a, [bc]	; load HUNDREDS bcd digit
 	bug_message	"... 100's digit (%A%) stored in %HL%"

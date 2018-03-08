@@ -1362,6 +1362,7 @@ hex_gfx_data:
 	generate_0_F_gfx
 hex_gfx_data_end:
 rom_pong:
+	DB	$00,$E0	; erase screen
 	DB	$60,5	; load V0 (X) with 5
 	DB	$61,6	; load V1 (Y) with 6
 	; loaded x,y so that drawn characters span multiple tiles
@@ -1376,8 +1377,15 @@ rom_pong:
 	; draw another letter
 	DB	$72,$FF	; V2 += 255 (aka -1) = char D
 	DB	$F2,$29	; set index = REG.2's char
-	DB	$70,7	; move X coordinate to the right by 8
+	DB	$70,7	; move X coordinate to the right
 	DB	$D0,$15	; draw next letter
 	; letters F E D should be drawn on screen
-	DB	$F1,$0A	; wait for a keypress
+	DB	$F2,$0A	; wait for a keypress, store in V2
+	DB	$70,7	; move X coordinate to the right
+	DB	$F2,$29	; set index = REG.2's char
+	DB	$D0,$15	; draw letter being pressed
+	; [$224]
+	DB	$E2,$9E	; skip next instruction if key in REG.2 is pressed
+	DB	$12,$00	; RESET. Jump to address $200. Aka re-run program
+	DB	$12,$24	; jump to address $224
 rom_pong_end:

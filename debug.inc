@@ -34,6 +34,16 @@
 	IF !DEF(debug_inc)
 debug_inc	set	1
 
+; call this after importing debug.inc to set verbose level.
+; If you do not call this, all macros below assume a normal (1) verbose level
+bug_verbose: MACRO			; Set verbose level
+	if _NARG == 0			; 0 = no messages, no breakpoints
+verbose = 1				; 1 = normal: messages & breakpoints
+	ELSE				; 2 = breakpoints only, no messages
+verbose = \1				; 3 = messages become breakpoints
+	ENDC
+	ENDM
+
 ; this is a macro that stores in memory a debug message. This message will
 ; be skipped by the actual hardware, but in BGB or No$GMB it will display
 ; in their "debug messages" window
@@ -45,13 +55,26 @@ debug_inc	set	1
 ;   DebugMsgWindow=1    # to output to bgb's debug window (only when shown)
 ; )
 bug_message: MACRO
-	IF	DEF(verbose)
+	IF	!DEF(verbose)
 	ld	d, d	; "magic bytes" indicating "debug" message here
 	jr .end\@
 	DW $6464
 	DW $0000
 	DB \1
 .end\@
+	ELSE
+	IF verbose == 1
+	ld	d, d	; "magic bytes" indicating "debug" message here
+	jr .end\@
+	DW $6464
+	DW $0000
+	DB \1
+.end\@
+	ENDC
+		; if verbose == 3, all bug messages generate breakpoints instead
+		IF verbose == 3
+		bug_break	\1
+		ENDC
 	ENDC
 	ENDM
 
@@ -63,12 +86,35 @@ bug_message: MACRO
 ;   DebugSrcBrk=1
 ; )
 bug_break: MACRO
-	bug_message	\1
+	IF	!DEF(verbose)
+	ld	d, d	; "magic bytes" indicating "debug" message here
+	jr .end_msg\@
+	DW $6464
+	DW $0000
+	DB \1
+.end_msg\@
+	; begin breakpoint code
 	ld	b, b	; "magic bytes" indicating "break"
 	jr .end\@
 	DW $6464
 	DW $0000
 .end\@
+	ELSE
+		if verbose == 1 | verbose == 2 | verbose == 3
+		ld	d, d	; "magic bytes" indicating "debug" message here
+		jr .end_msg\@
+		DW $6464
+		DW $0000
+		DB \1
+.end_msg\@
+		; begin breakpoint code
+		ld	b, b	; "magic bytes" indicating "break"
+		jr .end\@
+		DW $6464
+		DW $0000
+.end\@
+		ENDC
+	ENDC
 	ENDM
 
 	ENDC	; end definition of debug.asm

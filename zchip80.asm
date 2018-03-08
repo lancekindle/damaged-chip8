@@ -1,5 +1,6 @@
 include "gbhw.inc"	; wealth of gameboy hardware & addresses info
-verbose	= 1	; uncomment to enable verbose (all bug_messages) output
+include "debug.inc"
+	bug_verbose	2	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
 
 ;-------------- INTERRUPT VECTORS ------------------------
 ; specific memory addresses are called when a hardware interrupt triggers
@@ -47,7 +48,6 @@ SECTION "rom header", ROM0[$0104]
 include "dma.inc"
 include "vars.asm"
 include "syntax.inc"
-include "debug.inc"
 include "memory.asm"
 include "lcd.asm"
 

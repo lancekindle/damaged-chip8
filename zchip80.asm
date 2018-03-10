@@ -199,6 +199,19 @@ pop_pc_from_chip8_stack: MACRO
 	ENDM
 
 init_variables:
+.zero_registers
+	ld	c, LOW(REG.0)
+	ld	a, LOW(REG.F)
+	sub	c	; A holds # of registers
+	inc	a	; increment by 1 to get all registers count
+	ld	b, a	; move # of registers to b
+	xor	a
+.register_zero_loop
+	ld	[$FF00+c], a	; set register to zero
+	inc	c		; move to next register
+	dec	b		; decrement counter
+	jr	nz, .register_zero_loop	; repeat until all registers zeroed
+.zero_variables
 	xor	a
 	ld	[jpad_rKeys], a
 	ld	[jpad_rHexEncoded], a

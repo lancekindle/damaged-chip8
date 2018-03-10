@@ -493,6 +493,7 @@ chip8_3XNN_skip_if_vx_eq_nn:
 	ld	a, [$FF00+c]
 	; twice increment HL if B (NN) == A (VX). (x2 inc hl skips next opcode)
 	ifa	==, b,	x2 inc hl
+	ifa	==, b, bug_message	"... SKIPPED"
 	jp	chip8.decode_opcode
 
 ; skip next opcode if VX != NN (2nd byte of current opcode)
@@ -508,6 +509,7 @@ chip8_4XNN_skip_if_vx_not_eq_nn:
 	ld	a, [$FF00+c]
 	; twice increment HL if B (NN) != A (VX). (x2 inc hl skips next opcode)
 	ifa	!=, b,	x2 inc hl
+	ifa	!=, b, bug_message	"... SKIPPED"
 	jp	chip8.decode_opcode
 
 ; skip next opcode if VX == VY
@@ -528,6 +530,7 @@ chip8_5XY0_skip_if_vx_eq_vy:
 	ld	a, [$FF00+c]	; get VY
 	; skip next opcode if VX (B) == VY (A)
 	ifa	==, b,	x2 inc hl
+	ifa	==, b, bug_message	"... SKIPPED"
 	jp	chip8.decode_opcode
 
 
@@ -700,6 +703,7 @@ chip8_9XY0_skip_if_vx_not_eq_vy:
 	; A = VY, B = VX
 	; if VX != VY, skip next opcode (aka "inc hl" twice)
 	ifa	!=, b,	x2 inc hl
+	ifa	!=, b, bug_message	"... SKIPPED"
 	jp	chip8.decode_opcode
 
 ; set index to $0NNN + chip8_rom offset (actually chip8_data offset)

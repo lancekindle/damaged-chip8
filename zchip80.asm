@@ -1217,7 +1217,7 @@ ONES = NUMBER % 10
 	jr	nz, ._FX55_dump_loop
 ._FX55_done
 	bug_message	"... FX55 dump ended at %HL%"
-	store_rpair_from_hl	REG.I	; store I
+	;store_rpair_from_hl	REG.I	; store I
 	jp	chip8.pop_pc
 .chip8_FX65_load_v0_to_vx_at_I
 ; c holds [X]
@@ -1243,7 +1243,7 @@ ONES = NUMBER % 10
 	jr	nz, ._FX65_restore_loop
 ._FX65_done
 	bug_message	"... FX65 load ended with I at %HL%"
-	store_rpair_from_hl	REG.I	; store I
+	;store_rpair_from_hl	REG.I	; store I
 	jp	chip8.pop_pc
 
 

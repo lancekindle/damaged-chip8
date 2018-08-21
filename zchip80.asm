@@ -273,6 +273,7 @@ screen_setup:
 	ret
 	
 
+
 code_begins:
 	di	; disable interrupts
 	ld	SP, $FFFF	; set stack to top of HRAM
@@ -997,8 +998,8 @@ draw_pixel: MACRO
 	; so if I only pause on the update and draw time, it's less likely
 	; to catch the flickering of sprites.
 	; BUT ITS ALSO PROBABLY GOING TO INTRODUCE SPORADIC SPEEDUPS IN GAME.
-	;halt
-	ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
+	halt
+	;ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
 .draw_jumps_to_next_tile
 	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
@@ -1377,7 +1378,13 @@ generate_0_F_gfx: MACRO
 hex_gfx_data:
 	generate_0_F_gfx
 hex_gfx_data_end:
+
+
 rom_pong:
+  incbin	"brix.rom"
+rom_pong_end:
+
+rom_pong2:
 	DB	$00,$E0	; erase screen
 	DB	$60,5	; load V0 (X) with 5
 	DB	$61,6	; load V1 (Y) with 6
@@ -1404,4 +1411,7 @@ rom_pong:
 	DB	$E2,$9E	; skip next instruction if key in REG.2 is pressed
 	DB	$12,$00	; RESET. Jump to address $200. Aka re-run program
 	DB	$12,$24	; jump to address $224
-rom_pong_end:
+
+rom_pong_end2:
+
+

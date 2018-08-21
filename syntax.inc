@@ -539,7 +539,7 @@ decrement: MACRO
 	ENDM
 
 
-; CASE 5, .end, roll_ball
+; CASE ==, 5, .end, roll_ball
 ; evaluates A against 5. If equal, it runs the command roll_ball and then
 ; breaks out of the switch statement by jumping to .end
 ; otherwise it skips roll_ball and moves onto the line below (which is usually

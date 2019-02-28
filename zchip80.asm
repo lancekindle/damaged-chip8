@@ -30,7 +30,6 @@ SECTION "Serial", ROM0[$0058]
 SECTION "Joypad", ROM0[$0060]
 	reti
 ;----------- END INTERRUPT VECTORS -------------------
-; QUESTION TO STUDENT -- How many bytes separate each interrupt vector?
 
 
 SECTION "ROM_entry_point", ROM0[$0100]	; ROM is given control from boot here
@@ -79,6 +78,8 @@ include "lcd.asm"
 	var_HighRamByte	jpad_rKeys
 	var_HighRamByte	jpad_rHexEncoded	; variables for keypad
 	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
+	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
+	var_HighRamByte rSP_LSB ; this variable (rSP) is not part of chip8's registers
 
 include "joypad.inc"
 CHIP8_BEGIN = $C000	; 4KB of memory for chip8 data [$D000 - $E000]
@@ -89,20 +90,24 @@ CHIP8_ROM = CHIP8_FONT_END	; actual rom data is loaded at address $D200
 CHIP8_PC_BEGIN = CHIP8_ROM 	; program counter begins here, where ROM begins
 CHIP8_CALL_STACK = CHIP8_BEGIN + $0EA0  ; call stack / variables: 96 bytes
 CHIP8_DISPLAY_TILES = CHIP8_CALL_STACK + $0060	; $DF00 -> $DFFF
+CHIP8_DISPLAY_TILES_END = CHIP8_DISPLAY_TILES + $00FF
 						; holds tiles / display buffer
 CHIP8_END = CHIP8_BEGIN + $1000 ; $E000
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
-; (used for clearing screen)
+; (used for all other tiles on the screen)
 CHIP8_BLANK_TILE = 32
 CHIP8_X_OFFSET_B = 4
 CHIP8_Y_OFFSET_B = 4
 CHIP8_WIDTH_B = 8
 CHIP8_HEIGHT_B = 4
 
+SCREEN_OFFSET_X = (128/2) - (160/2) ; X offset = 64 - 80 = -16
+SCREEN_OFFSET_Y = (64/2) - (144/2) ; Y offset = 32 - 72 = -40. Wow that's exactly where we need it
+				; because -39 is where we finish copying to VRAM
+
 ; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
 ; the screen to 128x64. It's still small, but at least it'll look better
-; DON'T do this yet, though. Drawing in Original Resolution to allow quick use
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -244,9 +249,9 @@ copy_rom_to_ram:
 ; setup screen to point to CHIP8 tiles
 screen_setup:
 	; tile 32 is blank
-	; initially set full screen to be blank
+	; initially set FULL screen to be blank
 	call	lcd_Stop
-	ld	a, 32	; a points to tile 32 -> a blank tile
+	ld	a, CHIP8_BLANK_TILE	; a points to tile 32 -> a blank tile
 	ld	hl, _SCRN0
 	ld	b, 16
 .fill_with_blank
@@ -267,9 +272,29 @@ screen_setup:
 		; advance to next row
 		add	hl, bc
 	ENDR
+.shade_blank_tile
+; blank tile fills the rest of the screen. Set it to lightest shade so that chip8 screen is more visible
+	ld	hl, _VRAM + CHIP8_BLANK_TILE*16  ; address of blank tile
+	ld	a, $FF
+	REPT 16	; write 16 bytes. set everything to $FF
+		; We'll change %11 to "half-shade" and %01, %10 half-shades to full-dark
+		; (basically, differentiate between background tile and CHIP8 tiles)
+		ldi	[hl], a
+	ENDR
+.turn_on_lcd
 	call	lcd_On			; turn on lcd
+	ldh	a, [rLCDC]
+	or	LCDCF_OBJON
+	xor	LCDCF_OBJON	; toggle sprites/objects off. Increases H-blank time
+	ldh	[rLCDC], a
 	call	lcd_ShowBackground	; show background
 	call	lcd_ScreenInit	; setup palletes and screen x,y
+	ld	a, %01111100	; CHANGE BACKGROUND PALLET TO ... WACKY. %11 = lightly-shaded, whereas %01 or %10 will be full shaded
+	ldh	[rBGP], a	;  set background pallet
+	ld	a, SCREEN_OFFSET_X
+	ldh	[rSCX], a
+	ld	a, SCREEN_OFFSET_Y		; set (y,x) to (-40, -16)
+	ldh	[rSCY], a			; this'll center the display exactly
 	ret
 	
 
@@ -281,6 +306,10 @@ code_begins:
 	call	screen_setup
 	ld	a, IEF_VBLANK
 	ld	[rIE], a	; enable vblank interrupts
+	ld	a, STATF_MODE00	; hblank interrupt
+	ld	[rSTAT], a	; enable hblank, when LCDC interrupt is enabled (during vblank we set it)
+	; hblank interrupt vector (top of rom) is just RETI. That's purposeful. We actually use the interrupt to resume from a halt
+	; during drawing operations.
 	call	copy_rom_to_ram
 	ei
 	ld	hl, CHIP8_PC_BEGIN - 2
@@ -305,54 +334,90 @@ chip8_not_implemented:
 vblank_copy_tiles_buffer_to_vram:
 	pushall
 	bug_message	"vblank beginning with %CLKS2VBLANK% clocks left"
-	; copy 1 byte from DE two times to 2 bytes @ HL
-	ld	a, [vram_halfcopy_toggle]
-	xor	1
-	ld	[vram_halfcopy_toggle], a
-	jp	z, .second_half
-.first_half
-	ld	de, CHIP8_DISPLAY_TILES
-	ld	hl, _VRAM
-	ld	b, 8	; 8 source bytes per tile (16 on destination side)
-	; we use REPT instead of a mem_Copy routine for speed
-.copy_loop1
-	; CRITICAL	(this should be 32, but it overruns its time limit)
-	REPT	16	; 32 tiles
-		ld	a, [de]
-		ldi	[hl], a
-		ldi	[hl], a	; copy 8byte tile to 16byte tile
-		inc	de	; advance to next source byte
-	ENDR
-	dec	b
-	jp	nz, .copy_loop1
-.done1
-	ld	a, [rLY]	; get lcd Y coordinate (just check)
-	bug_message	"copying done. %CLKS2VBLANK% clocks left"
-	bug_message	"rLY=%A%... in trouble if > 0"
-	popall
-	jp	vblank_handle_timers	; this'll return and enable interrupts
-.second_half
-	ld	de, CHIP8_DISPLAY_TILES + 128
-	ld	hl, _VRAM + 256
-	ld	b, 8	; 8 source bytes per tile (16 on destination side)
-	; we use REPT instead of a mem_Copy routine for speed
-.copy_loop2
-	; CRITICAL	(this should be 32, but it overruns its time limit)
-	REPT	16	; 32 tiles
-		ld	a, [de]
-		ldi	[hl], a
-		ldi	[hl], a	; copy 8byte tile to 16byte tile
-		inc	de	; advance to next source byte
-	ENDR
-	dec	b
-	jp	nz, .copy_loop1
-.done2
-	ld	a, [rLY]	; get lcd Y coordinate (just check)
-	bug_message	"copying done. %CLKS2VBLANK% clocks left"
-	bug_message	"rLY=%A%... in trouble if > 0"
-	popall
-	jp	vblank_handle_timers	; this'll return and enable interrupts
+;	jp	.old_vblank_copy_method
 
+.vblank_copy_routine
+	; try copying bytes from GFX to VRAM using SP and popping. we only care about writing every other byte.
+	ld	[rSP], SP ; pushes the current Stack Pointer to rSP for safekeeping
+	ld	SP, CHIP8_DISPLAY_TILES; (64*32/8)*2 (2 bytes per pixel on 8 gameboy side) = 512 bytes
+	ld	HL, _VRAM; - 1   where the last byte lives
+	ld	de, 2	; we'll use this to increment HL by 2. We only need to set every other byte in VRAM
+	; now we've got HL pointing to end of tiles. and SP points to end of VRAM
+	; vblank has 1140 cycles to copy bytes to vram. We use 100*11-cycles aka 1100 of those cycles with the below REPT
+	REPT	100  ;(screen is 64x32. But each byte holds 8 pixels, hence /8) aka there's 256 bytes to copy
+			; and normally the gameboy uses two bits per pixel. But we don't care! We just write every other
+			; tile byte with out pixel data. So we copy 200 bytes here... 56 left during h-blanks
+	; sinc we pop off two bytes at a time, we only have to do this loop 128 times!
+		pop	bc	; pop from chip8 video buffer. increments SP after each read. bc holds two rows of a tile  (3 cycles)
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		; total cost = 11 cycles for 2 bytes. Aka 5.5 cycles per byte. Not bad :)
+	ENDR
+.other_vblank_routine
+	ld	hl, rSP
+	ldi	a, [hl]
+	ld	h, [hl]
+	ld	l, a ; HL holds SP
+	ld	sp, hl ; restore sp to original location
+	call	vblank_handle_timers
+.hblank_copy_routine
+	di	; disable interrupts. We now start copying half a tile each H-blank from the lower-half of the screen down
+	ld	[rSP], SP ; pushes the current Stack Pointer to rSP for safekeeping
+	ld	SP, CHIP8_DISPLAY_TILES + (100)*2; (64*32/8)*2 (2 bytes per pixel on 8 gameboy side) = 512 bytes
+	ld	HL, _VRAM + (100)*4 - 2 ; -2 is for DE initial offset so we can ((add hl, de)) before writing anything
+	ld	de, 2	; we'll use this to increment HL by 2. We only need to set every other byte in VRAM
+	ldh	a, [rIE]
+	or	IEF_LCDC ; enable LCD interrupts (aka HBLANK)
+	ldh	[rIE], a
+	; now we've got HL pointing to end of tiles. and SP points to end of VRAM
+	; setup stack and everything
+	; for 7 h-blanks we fill in a tile each time (8 bytes per tile since we only write every-other byte)
+	; each h-blank lasts 48.64 microseconds. And that's ~50 cycles. Copying over these 8 bytes takes <44cycles
+	; (Since we pre-pop the first two bytes)
+	ld	a, 0
+	REPT	56/8  ; finish copying 256 bytes. First 200 copied during vblank, leaving 56 here. We copy 8 bytes per repetition.
+			; also since we write every other byte, we actually manage to copy over a full tile each hblank
+		ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
+				 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
+				 ; interrupts enabled)
+		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		halt	; resumed by hblank interrupt flag. Since we don't enable interrupts, execution stays here
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+	ENDR
+
+.return_to_emulation
+; restore SP
+	ld	hl, rSP
+	ldi	a, [hl]
+	ld	h, [hl]
+	ld	l, a ; HL holds SP
+	ld	sp, hl ; restore sp to original locatio
+	; now we disable h-blank
+	ldh	a, [rIE]
+	xor	IEF_LCDC ; disable LCD interrupts (aka HBLANK)
+	ldh	[rIE], a
+	popall
+	reti
 
 
 chip8:
@@ -428,10 +493,6 @@ chip8_00E0_disp_clear:
 
 	; we have to write 0 to all the pixels that are part of chip8.
 	; if we stick to the resolution of 64x32, it's 8x4 tiles = 32 tiles
-	; each tile is 16 bytes large -> 512 bytes to copy
-	; Later on, we might take advantage of the fact that CHIP8 games are
-	; B/W, meaning we don't need all four shades in the tiles we can copy
-	; the every other byte from the tile
 
 	ld	hl, CHIP8_DISPLAY_TILES
 	xor	a
@@ -827,13 +888,13 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; or... VY >> 3, then VY << 6. OR (VY & %11111000) << 3
 	ld	a, c	; get VY
 	and	%11111000	; aka (A >> 3) << 3
-	; now we multiply A by 8
+	; now we multiply A by 8 (aka << 3)
 	ld	l, a
 	ld	h, 0
-	; HL => A
+	; HL => A (HL stores A)
 	add	hl, hl	; HL = 2A
 	add	hl, hl	; HL = 4A
-	add	hl, hl	; HL = 8A
+	add	hl, hl	; HL = 8A (aka HL = A << 3)
 	; tadah. now [HL] points to correct tile row.
 	; (but not correct pixel row within tile)
 	ld	a, c	; restore VY
@@ -1412,6 +1473,6 @@ rom_pong2:
 	DB	$12,$00	; RESET. Jump to address $200. Aka re-run program
 	DB	$12,$24	; jump to address $224
 
-rom_pong_end2:
+rom_pong2_end:
 
 

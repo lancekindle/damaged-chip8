@@ -140,8 +140,16 @@ TACF_262KHZ  EQU %00000001
 ; --
 ; -- IF ($FF0F)
 ; -- Interrupt Flag (R/W)
-; -- I wouldn't mess with this one..... I don't know what it does
-; -- $FFFF is the register where you control which interrupts are enabled
+; -- $FFFF is the register where you control which interrupts are enabled.
+; -- Interrupt Flag is set to indicate which interrupt has occurred. This
+; -- flag is set and cleared when the gameboy services the interruption.
+; -- if interrupts are disabled (DI), then an interrupt sets the flag here
+; -- (and breaks out of HALT) but does NOT trigger an actual interrupt,
+; -- since they are disabled. If you halt again and the interrupt flag
+; -- has not been manually cleared the HALT will be again immediately
+; -- broken past / skipped. So for tight timing loops in which you DI and
+; -- use halt to wait for an h-blank interrupt, remember to also manually
+; -- clear rIF so that the cpu doesn't immediately resume from a halt
 ; --
 rIF EQU $FF0F
 

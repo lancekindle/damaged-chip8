@@ -373,12 +373,12 @@ vblank_copy_tiles_buffer_to_vram:
 	ldh	[rIE], a
 	; now we've got HL pointing to end of tiles. and SP points to end of VRAM
 	; setup stack and everything
-	; for 7 h-blanks we fill in a tile each time (8 bytes per tile since we only write every-other byte)
-	; each h-blank lasts 48.64 microseconds. And that's ~50 cycles. Copying over these 8 bytes takes <44cycles
-	; (Since we pre-pop the first two bytes)
+	; for 5 h-blanks we fill in 10 bytes each time (8 bytes per tile since we only write every-other byte)
+	; each h-blank lasts 48.64 microseconds. And that's ~50 cycles. Copying over these 10 bytes takes 50 cycles,
+	; which barely makes it :) We can manage this since we pre-pop the first two bytes, and pre-increment HL
 	ld	a, 0
-	REPT	56/8  ; finish copying 256 bytes. First 200 copied during vblank, leaving 56 here. We copy 8 bytes per repetition.
-			; also since we write every other byte, we actually manage to copy over a full tile each hblank
+	REPT	56/10  ; finish copying 256 bytes. First 200 copied during vblank, leaving 56 here. We copy 10 bytes per repetition.
+			; also since we write every other byte, we actually manage to copy > a full tile each hblank
 		ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
 				 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
 				 ; interrupts enabled)
@@ -403,7 +403,34 @@ vblank_copy_tiles_buffer_to_vram:
 		ld	[hl], c	; (2 cycles)
 		add	hl, de	; increment HL by 2 (2 cycles)
 		ld	[hl], b	; (2 cycles)
+		pop	bc	; (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
 	ENDR
+	; finish copying 256 bytes. Since we managed 10 bytes per hblank, we finish the last 6 bytes here
+	; this portion below is just a subset of the above repeated copying cycle
+	ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
+			 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
+			 ; interrupts enabled)
+	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	halt	; resumed by hblank interrupt flag. Since we don't enable interrupts, execution stays here
+	ld	[hl], c	; (2 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	ld	[hl], b	; (2 cycles)
+	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	ld	[hl], c	; (2 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	ld	[hl], b	; (2 cycles)
+	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	ld	[hl], c	; (2 cycles)
+	add	hl, de	; increment HL by 2 (2 cycles)
+	ld	[hl], b	; (2 cycles)
+
 
 .stretch_screen_vertically
 ; if we repeat the same horizontal line (through rSCY changes) for each line in chip8 we can stretch it vertically

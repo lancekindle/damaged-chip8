@@ -405,6 +405,27 @@ vblank_copy_tiles_buffer_to_vram:
 		ld	[hl], b	; (2 cycles)
 	ENDR
 
+.stretch_screen_vertically
+; if we repeat the same horizontal line (through rSCY changes) for each line in chip8 we can stretch it vertically
+	ld	hl, rLY
+	ld	b, 0 - SCREEN_OFFSET_Y	; (screen_offset_y is negative). Taking absolute value would be another alternative
+.loop_until_drawing_chip8_graphics
+	ld	a, [hl]
+	cp	b
+	jr	nz, .loop_until_drawing_chip8_graphics
+	; we get here if on line where chip8 graphics get drawn
+	ld	hl, rSCY
+	xor	a
+.double_each_line
+	REPT	32
+		ld	[rIF], a	; clear interrupts
+		halt	; will resume on the next hblank interrupt
+		ld	[rIF], a	; clear hblank interrupt
+		dec	[hl]	; decrement SCY (screen Y position) so graphics line is repeated
+		halt	; resume on next hblank (next hblank doesn't stretch)
+	ENDR
+	ld	[hl], SCREEN_OFFSET_Y	; reset screen position for next screen refresh
+	
 .return_to_emulation
 ; restore SP
 	ld	hl, rSP

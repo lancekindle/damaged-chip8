@@ -78,8 +78,9 @@ include "lcd.asm"
 	var_HighRamByte	jpad_rKeys
 	var_HighRamByte	jpad_rHexEncoded	; variables for keypad
 	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
+	; this variable (rSP) is not part of chip8's registers
 	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
-	var_HighRamByte rSP_LSB ; this variable (rSP) is not part of chip8's registers
+	var_HighRamByte rSP_LSB 
 
 include "joypad.inc"
 CHIP8_BEGIN = $C000	; 4KB of memory for chip8 data [$D000 - $E000]
@@ -96,11 +97,11 @@ CHIP8_END = CHIP8_BEGIN + $1000 ; $E000
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
 ; (used for all other tiles on the screen)
-CHIP8_BLANK_TILE = 32
 CHIP8_X_OFFSET_B = 4
 CHIP8_Y_OFFSET_B = 4
 CHIP8_WIDTH_B = 8
 CHIP8_HEIGHT_B = 4
+CHIP8_BLANK_TILE = CHIP8_WIDTH_B * CHIP8_HEIGHT_B ; 32
 
 SCREEN_OFFSET_X = (128/2) - (160/2) ; X offset = 64 - 80 = -16
 SCREEN_OFFSET_Y = (64/2) - (144/2) ; Y offset = 32 - 72 = -40. Wow that's exactly where we need it
@@ -253,30 +254,31 @@ screen_setup:
 	call	lcd_Stop
 	ld	a, CHIP8_BLANK_TILE	; a points to tile 32 -> a blank tile
 	ld	hl, _SCRN0
-	ld	b, 16
+	ld	b, SCRN_VX_B	; 32
 .fill_with_blank
-	REPT	64
+	REPT	SCRN_VY_B	; 32
 		ldi	[hl], a
 	ENDR
 	dec	b
 	jr	nz, .fill_with_blank
 	; tiles 0-31 should display in a 4x8 tile fashion (4 high, 8 wide)
+.point_to_chip8_tiles_onscreen
 	xor	a
 	ld	hl, _SCRN0
-	ld	bc, SCRN_VX_B - 8	; -8 because we are 8 tiles wide
-	REPT	4
-		REPT	8
+	ld	bc, SCRN_VX_B - CHIP8_WIDTH_B	; aka 32 - 8 because we are chip8 is 8 tiles wide
+	REPT	CHIP8_HEIGHT_B	; 4
+		REPT	CHIP8_WIDTH_B	; 8
 			ldi	[hl], a
 			inc	a
 		ENDR
-		; advance to next row
-		add	hl, bc
+		add	hl, bc	; advance to next row. HL now points to next row tile (onscreen) where
+				; the next chip8's row begins
 	ENDR
 .shade_blank_tile
 ; blank tile fills the rest of the screen. Set it to lightest shade so that chip8 screen is more visible
 	ld	hl, _VRAM + CHIP8_BLANK_TILE*16  ; address of blank tile
 	ld	a, $FF
-	REPT 16	; write 16 bytes. set everything to $FF
+	REPT 16	; write 16 bytes (aka one tile's worth). set everything to $FF
 		; We'll change %11 to "half-shade" and %01, %10 half-shades to full-dark
 		; (basically, differentiate between background tile and CHIP8 tiles)
 		ldi	[hl], a
@@ -430,7 +432,7 @@ vblank_copy_tiles_buffer_to_vram:
 	ld	hl, rSCY
 	xor	a
 .double_each_line
-	REPT	32
+	REPT CHIP8_HEIGHT_B * 8 	; =32. repeat for each row of pixels
 		ld	[rIF], a	; clear interrupts
 		halt	; will resume on the next hblank interrupt
 		ld	[rIF], a	; clear hblank interrupt
@@ -532,7 +534,7 @@ chip8_00E0_disp_clear:
 	xor	a
 	ld	b, 8
 .clear_loop
-	REPT 32	; repeat once per tile to copy
+	REPT CHIP8_WIDTH_B * CHIP8_HEIGHT_B 	; =32. repeat once per tile to copy
 		ldi	[hl], a	; write 0 to tiles
 	ENDR
 	dec	b

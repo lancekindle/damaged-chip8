@@ -340,14 +340,14 @@ vblank_copy_tiles_buffer_to_vram:
 	; try copying bytes from GFX to VRAM using SP and popping. we only care about writing every other byte.
 	ld	[rSP], SP ; pushes the current Stack Pointer to rSP for safekeeping
 	ld	SP, CHIP8_DISPLAY_TILES; (64*32/8)*2 (2 bytes per pixel on 8 gameboy side) = 512 bytes
-	ld	HL, _VRAM; - 1   where the last byte lives
+	ld	HL, _VRAM
 	ld	de, 2	; we'll use this to increment HL by 2. We only need to set every other byte in VRAM
-	; now we've got HL pointing to end of tiles. and SP points to end of VRAM
+	; now we've got SP pointing to start of tiles. And HL points to start of VRAM
 	; vblank has 1140 cycles to copy bytes to vram. We use 100*11-cycles aka 1100 of those cycles with the below REPT
 	REPT	100  ;(screen is 64x32. But each byte holds 8 pixels, hence /8) aka there's 256 bytes to copy
 			; and normally the gameboy uses two bits per pixel. But we don't care! We just write every other
 			; tile byte with out pixel data. So we copy 200 bytes here... 56 left during h-blanks
-	; sinc we pop off two bytes at a time, we only have to do this loop 128 times!
+	; sinc we pop off two bytes at a time, we only have to do this loop 128 times! (but vblank isn't long enough for that)
 		pop	bc	; pop from chip8 video buffer. increments SP after each read. bc holds two rows of a tile  (3 cycles)
 		ld	[hl], c	; (2 cycles)
 		add	hl, de	; increment HL by 2 (2 cycles)
@@ -371,13 +371,13 @@ vblank_copy_tiles_buffer_to_vram:
 	ldh	a, [rIE]
 	or	IEF_LCDC ; enable LCD interrupts (aka HBLANK)
 	ldh	[rIE], a
-	; now we've got HL pointing to end of tiles. and SP points to end of VRAM
-	; setup stack and everything
-	; for 5 h-blanks we fill in 10 bytes each time (8 bytes per tile since we only write every-other byte)
-	; each h-blank lasts 48.64 microseconds. And that's ~50 cycles. Copying over these 10 bytes takes 50 cycles,
-	; which barely makes it :) We can manage this since we pre-pop the first two bytes, and pre-increment HL
+	; now we've got SP pointing to start of tiles. and HL points to start of VRAM (where we store the tiles drawn onscreen).
+	; For 4 h-blanks we fill in 12 bytes each time (with 8 bytes per tile since we only write every-other byte)
+	; each h-blank lasts 48.64 microseconds. And that's ~50 cycles. Copying over these 12 bytes takes 61 cycles
+	; It may be that this works since the next line starts with LCD performing OAM search (mode 2), and VRAM is
+	; still accessible during that time
 	ld	a, 0
-	REPT	56/10  ; finish copying 256 bytes. First 200 copied during vblank, leaving 56 here. We copy 10 bytes per repetition.
+	REPT	56/12  ; finish copying 256 bytes. First 200 copied during vblank, leaving 56 here. We copy 12 bytes per repetition.
 			; also since we write every other byte, we actually manage to copy > a full tile each hblank
 		ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
 				 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
@@ -388,58 +388,44 @@ vblank_copy_tiles_buffer_to_vram:
 		ld	[hl], c	; (2 cycles)
 		add	hl, de	; increment HL by 2 (2 cycles)
 		ld	[hl], b	; (2 cycles)
-		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], c	; (2 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], b	; (2 cycles)
-		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], c	; (2 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], b	; (2 cycles)
-		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], c	; (2 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], b	; (2 cycles)
-		pop	bc	; (3 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], c	; (2 cycles)
-		add	hl, de	; increment HL by 2 (2 cycles)
-		ld	[hl], b	; (2 cycles)
+		REPT 5	; copy 10 more bytes
+			pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+			add	hl, de	; increment HL by 2 (2 cycles)
+			ld	[hl], c	; (2 cycles)
+			add	hl, de	; increment HL by 2 (2 cycles)
+			ld	[hl], b	; (2 cycles)
+		ENDR
 	ENDR
-	; finish copying 256 bytes. Since we managed 10 bytes per hblank, we finish the last 6 bytes here
+	; finish copying 256 bytes. Since we managed 12 bytes per hblank, we finish the last (56 % 12) bytes here
 	; this portion below is just a subset of the above repeated copying cycle
-	ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
-			 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
-			 ; interrupts enabled)
-	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	halt	; resumed by hblank interrupt flag. Since we don't enable interrupts, execution stays here
-	ld	[hl], c	; (2 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	ld	[hl], b	; (2 cycles)
-	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	ld	[hl], c	; (2 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	ld	[hl], b	; (2 cycles)
-	pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	ld	[hl], c	; (2 cycles)
-	add	hl, de	; increment HL by 2 (2 cycles)
-	ld	[hl], b	; (2 cycles)
+	IF ((56 % 12) > 0)	; finish any extra copies not done with above loop.
+		ld	[rIF], a ; clear interrupt flags. so H-blank can trigger when it happens  (yeah. it seems that we have to
+				 ; clear the flag since the CPU doesn't clear this flag if it doesn't handle it (we don't have 
+				 ; interrupts enabled)
+		pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		halt	; resumed by hblank interrupt flag. Since we don't enable interrupts, execution stays here
+		ld	[hl], c	; (2 cycles)
+		add	hl, de	; increment HL by 2 (2 cycles)
+		ld	[hl], b	; (2 cycles)
+		REPT	((56 % 12) - 2)/2  ; we've already copied 2 bytes of the remainder. Finish copying over the last few bytes
+			pop	bc	; pop from chip8 video buffer. bc holds two rows of a tile  (3 cycles)
+			add	hl, de	; increment HL by 2 (2 cycles)
+			ld	[hl], c	; (2 cycles)
+			add	hl, de	; increment HL by 2 (2 cycles)
+			ld	[hl], b	; (2 cycles)
+		ENDR
+	ENDC
 
 
 .stretch_screen_vertically
 ; if we repeat the same horizontal line (through rSCY changes) for each line in chip8 we can stretch it vertically
 	ld	hl, rLY
 	ld	b, 0 - SCREEN_OFFSET_Y	; (screen_offset_y is negative). Taking absolute value would be another alternative
-.loop_until_drawing_chip8_graphics
+.loop_until_drawing_chip8_onscreen
 	ld	a, [hl]
 	cp	b
-	jr	nz, .loop_until_drawing_chip8_graphics
+	jr	nz, .loop_until_drawing_chip8_onscreen
 	; we get here if on line where chip8 graphics get drawn
 	ld	hl, rSCY
 	xor	a

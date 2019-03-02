@@ -1363,6 +1363,16 @@ vblank_handle_timers:
 	dec	a
 	ldh	[TIMER_SOUND], a
 	; should play a buzzer sound here, since TIMER_SOUND was nonzero
+	ld	a, %00010100
+	ldh	[rNR10], a
+	ld	a, $96
+	ldh	[rNR11], a
+	ld	a, $73
+	ldh	[rNR12], a
+	ld	a, $11
+	ldh	[rNR13], a
+	ld	a, $85
+	ldh	[rNR14], a
 .nosound
 .done
 	pop	AF

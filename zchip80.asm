@@ -1,6 +1,6 @@
 include "gbhw.inc"	; wealth of gameboy hardware & addresses info
 include "debug.inc"
-	bug_verbose	2	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
+	bug_verbose	1	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
 
 ;-------------- INTERRUPT VECTORS ------------------------
 ; specific memory addresses are called when a hardware interrupt triggers
@@ -75,12 +75,18 @@ include "lcd.asm"
 	var_HighRamByte	REG.SP		; SP is 16-bit
 	var_HighRamByte	REG.SP_LSB
 	var_HighRamByte	rDE_BIT4	; specific variable for drawing
-	var_HighRamByte	jpad_rKeys
-	var_HighRamByte	jpad_rHexEncoded	; variables for keypad
+	var_HighRamByte	jpad_rKeys	; holds last-pressed keys
+	var_HighRamByte jpad_rActiveKey	; holds the one chosen active key
+	var_HighRamByte	jpad_rHexEncoded
 	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
 	; this variable (rSP) is not part of chip8's registers
 	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
 	var_HighRamByte rSP_LSB 
+	var_HighRamByte keypad_map	; per each bit, holds a byte 1-F representing 1-16 for a keypress.
+	; loaded when loading an new rom
+	REPT	7
+		var_HighRamByte keypad_map\@
+	ENDR
 
 include "joypad.inc"
 CHIP8_WIDTH_B = 16
@@ -241,11 +247,16 @@ copy_rom_to_ram:
 	; eventually I'll make this a macro so I can specify which rom to copy
 	; for now we always copy pong rom
 	ld	hl, rom_pong
-	ld	bc, rom_pong_end - rom_pong
+	ld	bc, rom_pong.end - rom_pong
 	ld	de, CHIP8_PC_BEGIN
 	bug_message	"copying rom %HL% -> %DE% (size %BC%)"
 	call	mem_Copy
 	bug_message	"... end @ %DE%"
+	; now we copy keypad_map
+	ld	hl, rom_pong.end	; keypad_map for rom is right after end of rom
+	ld	de, keypad_map
+	ld	bc, 8	; 8 bytes representing the 8 different key values for D,U,L,R, Start, Select, B,A
+	call	mem_Copy
 	ret
 
 ; setup screen to point to CHIP8 tiles
@@ -1098,8 +1109,8 @@ draw_pixel: MACRO
 	; so if I only pause on the update and draw time, it's less likely
 	; to catch the flickering of sprites.
 	; BUT ITS ALSO PROBABLY GOING TO INTRODUCE SPORADIC SPEEDUPS IN GAME.
-	halt
-	;ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
+	;halt
+	ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
 .draw_jumps_to_next_tile
 	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
@@ -1127,7 +1138,9 @@ chip8_EXzz_decode:
 .chip8_EXA1_skip_if_vx_not_eq_key
 	; A holds $A1, C holds [X]
 	push	bc
-	call	get_key_press	; overwrites A,B,C?
+	push	hl
+	call	get_key_press	; overwrites A,B,C, HL
+	pop	hl
 	pop	bc
 	ld	b, a	; move keypress to b
 	ld	a, [$FF00+c]	; load vx
@@ -1138,7 +1151,9 @@ chip8_EXzz_decode:
 ; skip next opcode if key pressed (0-F) equals VX
 .chip8_EX9E_skip_if_vx_eq_key
 	push	bc
+	push	hl
 	call	get_key_press	; overwrites A,B,C?
+	pop	hl
 	pop	bc
 	ld	b, a	; move keypress to b
 	ld	a, [$FF00+c]	; load vx
@@ -1491,7 +1506,10 @@ hex_gfx_data_end:
 
 rom_pong:
   incbin	"brix.rom"
-rom_pong_end:
+.end
+.keypad
+		; Down, Up, Left, Right, Start, Select, B, A
+	DB	  -1,   -1, 4,    6,     -1,    -1,     -1,-1
 
 rom_pong2:
 	DB	$00,$E0	; erase screen

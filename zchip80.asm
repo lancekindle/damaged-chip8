@@ -82,6 +82,7 @@ include "lcd.asm"
 	; this variable (rSP) is not part of chip8's registers
 	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
 	var_HighRamByte rSP_LSB 
+	var_HighRamByte DRAW_Y_COORDINATE	; for detecting vertical wrap when drawing with DXYN
 	var_HighRamByte keypad_map	; per each bit, holds a byte 1-F representing 1-16 for a keypress.
 	; loaded when loading an new rom
 	REPT	7
@@ -907,7 +908,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; this is actually a binary operation masking off any bits >=64
 	; since 64 can be represented by 1 bit, and any bits greater than that (aka bit 7=128)
 	; is also a multiple of 64
-	AND	63	; aka AND %00111111. This is exactly the same as %64
+	and	63	; aka AND %00111111. This is exactly the same as %64
 	bug_message	"... vX = %A%"
 	ld	b, a	; store VX
 	ld	a, [hl]	; get $YN, but do NOT increment HL.
@@ -920,7 +921,8 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	ld	a, [$FF00+c]	; get VY
 	; wrap Y around scren aka Y % 32
 	; this is also a binary operation masking off any bits >= 32
-	AND	31	; aka AND %00011111
+	and	31	; aka AND %00011111
+	ld	[DRAW_Y_COORDINATE], a	; store current Y. For on-screen wrapping
 	bug_message	"... vY = %A%"
 	ld	c, a	; store VY in C
 	; BC contains $VX,VY   where VX = value of [X], and VY = value of [Y]
@@ -1030,6 +1032,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; bit4 only changes if we accidentally roll from a tile to the tile
 	; to the right of the current tile. We check this to determine if we
 	; need to jump from bottom of a tile to top of the tile below it
+	jp	.draw_sprite_row_loop
 draw_pixel: MACRO
 .pixel_\1_\@
 	bit	\1, [hl] ; test bit x. If it's 0 we don't have to do anything
@@ -1048,7 +1051,15 @@ draw_pixel: MACRO
 			; bits 7-6 we need to jump to next tile
 	call	c, .draw_jumps_to_next_tile
 	ENDM
-
+.draw_jumps_to_next_tile
+	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
+	; each, we add 8 to our tile pointer
+	ld	a, e
+	add	8
+	ld	e, a
+	if_flag	c, inc	d
+	; [DE] now points to next tile's row
+	ret
 .draw_sprite_row_loop
 	draw_pixel	7
 	draw_pixel	6
@@ -1106,6 +1117,21 @@ draw_pixel: MACRO
 	ld	e, a
 	if_flag	c,	inc d	; MSB + 1 if necessary
 	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
+.wrap_around_screen_vertically
+	; check if new row is >= 32, in which case we need to adjust which tile we are drawing on AGAIN
+	ld	a, [DRAW_Y_COORDINATE]
+	inc	a
+	ld	[DRAW_Y_COORDINATE], a
+	ifa	<, 32,	jp .draw_sprite_row_loop	; no wrap around needed. Carry on drawing
+	; we get here if Y >= 32, in which case we need to wrap Y value and DE appropriately
+	ld	a, 0
+	ld	[DRAW_Y_COORDINATE], a	; wrap around always back to 0
+	push	hl	; store sprite address
+	ld	hl, -(CHIP8_WIDTH_B * CHIP8_HEIGHT_B * 8)
+	add	hl, de
+	ldpair	de, hl	; DE = DE - CHIP8_SCREEN. Aka bump address up full screen's-worth.
+			; should properly adjust address from out-of-range bottom to top of screen
+	pop	hl	; restore sprite address
 	jp	.draw_sprite_row_loop
 .done_drawing_sprite
 	ldh	a, [REG.F]
@@ -1121,16 +1147,6 @@ draw_pixel: MACRO
 	;halt
 	ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
-.draw_jumps_to_next_tile
-	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
-	; each, we add 8 to our tile pointer
-	; now we need to add 8
-	ld	a, e
-	add	8
-	ld	e, a
-	if_flag	c, inc	d
-	; [DE] now points to next tile's row
-	ret
 
 
 ; keycode instructions: check how VX relates to pressed key

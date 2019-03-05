@@ -878,6 +878,7 @@ SET_REG_F: MACRO
 
 chip8_DXYN_draw_sprite_xy_n_high:
 ; draw sprite @ Vx,Vy with width of 8 pixels, height of N pixels (max 16)
+; X, Y is wrapped around screen, such that X = X % 64 and Y = Y % 32
 ; each row of pixels is read as bit-coded pixels starting at memory location
 ; REG.I. REG.I doesn't change after this operation. VF is set to 1 if any
 ; pixels are flipped from 1 to 0 as a result of this operation (pixels are
@@ -902,6 +903,11 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	add	LOW(REG.0)	;add REG.0 to offset
 	ld	c, a	; [X] in [C]
 	ld	a, [$FF00+c]	; get VX
+	; wrap X around screen. aka X % 64
+	; this is actually a binary operation masking off any bits >=64
+	; since 64 can be represented by 1 bit, and any bits greater than that (aka bit 7=128)
+	; is also a multiple of 64
+	AND	63	; aka AND %00111111. This is exactly the same as %64
 	bug_message	"... vX = %A%"
 	ld	b, a	; store VX
 	ld	a, [hl]	; get $YN, but do NOT increment HL.
@@ -912,6 +918,9 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	add	LOW(REG.0)	; add REG.0 to offset to get full address
 	ld	c, a
 	ld	a, [$FF00+c]	; get VY
+	; wrap Y around scren aka Y % 32
+	; this is also a binary operation masking off any bits >= 32
+	AND	31	; aka AND %00011111
 	bug_message	"... vY = %A%"
 	ld	c, a	; store VY in C
 	; BC contains $VX,VY   where VX = value of [X], and VY = value of [Y]

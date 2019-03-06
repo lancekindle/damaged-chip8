@@ -1165,6 +1165,7 @@ draw_pixel: MACRO
 	ld	[rDE_BIT4], a	; set new bit 4 of DE
 .wrap_around_screen_vertically
 	; check if new row is >= 32, in which case we need to adjust which tile we are drawing on AGAIN
+	jp	.draw_sprite_row_loop	; THIS DISABLES VERTICAL WRAP. No games seem to seriously use this
 	ld	a, [DRAW_Y_COORDINATE]
 	inc	a
 	ld	[DRAW_Y_COORDINATE], a

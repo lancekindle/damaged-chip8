@@ -14,7 +14,7 @@ LowRamLimit     SET     LowRamBase + $1FF ; 512 bytes (variables) available
 MidRamBase      SET     LowRamLimit
 MidRamLimit     SET     MidRamBase + $0FFF ; 4096 bytes (var+space) available
 HighRamBase	SET	DMA_END_LOC	; add 12... (size of dma code)
-HighRamLimit	SET	HighRamBase + 40	; limit of 20 variables
+HighRamLimit	SET	HighRamBase + 41	; limit of 20 variables
 ; OAM data is just a holding place where you can modify it. The OAM data
 ; will then get copied to OAM location in Video-Ram [$FE00 - $FEA0)
 

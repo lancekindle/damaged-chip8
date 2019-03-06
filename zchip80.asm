@@ -83,6 +83,7 @@ include "lcd.asm"
 	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
 	var_HighRamByte rSP_LSB 
 	var_HighRamByte DRAW_Y_COORDINATE	; for detecting vertical wrap when drawing with DXYN
+	var_HighRamByte DRAW_X_COORDINATE	; for detecting horizontal wrap when drawing with DXYN
 	var_HighRamByte keypad_map	; per each bit, holds a byte 1-F representing 1-16 for a keypress.
 	; loaded when loading an new rom
 	REPT	7
@@ -909,6 +910,7 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	; since 64 can be represented by 1 bit, and any bits greater than that (aka bit 7=128)
 	; is also a multiple of 64
 	and	63	; aka AND %00111111. This is exactly the same as %64
+	ld	[DRAW_X_COORDINATE], a	; store current X. For on-screen wrapping
 	bug_message	"... vX = %A%"
 	ld	b, a	; store VX
 	ld	a, [hl]	; get $YN, but do NOT increment HL.
@@ -1035,6 +1037,9 @@ chip8_DXYN_draw_sprite_xy_n_high:
 	jp	.draw_sprite_row_loop
 draw_pixel: MACRO
 .pixel_\1_\@
+	ld	a, [DRAW_X_COORDINATE]
+	inc	a	; increment our known X coordinate (for later bound-check
+	ld	[DRAW_X_COORDINATE], a				 ; & wrap-around)
 	bit	\1, [hl] ; test bit x. If it's 0 we don't have to do anything
 			 ; if it's 1, we xor current mask with [de]
 	jp	z, .rotate_mask_\@
@@ -1051,6 +1056,7 @@ draw_pixel: MACRO
 			; bits 7-6 we need to jump to next tile
 	call	c, .draw_jumps_to_next_tile
 	ENDM
+
 .draw_jumps_to_next_tile
 	; jump to next tile's same row. Since each tile is 8 rows of 1 byte
 	; each, we add 8 to our tile pointer
@@ -1059,7 +1065,23 @@ draw_pixel: MACRO
 	ld	e, a
 	if_flag	c, inc	d
 	; [DE] now points to next tile's row
+.wrap_horizontally
+	; check if X >= 64, in which case we subtract a full width of tiles
+	; from our address to end up from out-of-range-to-right to beginning-of-left
+	ld	a, [DRAW_X_COORDINATE]
+	ifa	<, 64,	ret	; return if X is in-bounds
+	; we get here if X == 64 (technically >= 64. But due to when we check it's always == 64)
+	ld	a, 0
+	ld	[DRAW_X_COORDINATE], a	; reset X coordinate
+	; so [DE] needs to be adjusted by a full width of tiles.
+	push	hl
+	ld	hl, -(CHIP8_WIDTH_B * 8)
+	add	hl, de
+	ldpair	de, hl	; [DE] has been wrapped from beyond-rightmost-tile to start of leftmost-tile
+			; on the chip8 screen
+	pop	hl
 	ret
+
 .draw_sprite_row_loop
 	draw_pixel	7
 	draw_pixel	6
@@ -1073,7 +1095,7 @@ draw_pixel: MACRO
 	; check if done drawing
 	pop	af
 	dec	a
-	jr	z, .done_drawing_sprite
+	jp	z, .done_drawing_sprite
 	push	af	; if not done, re-push number of rows left to draw
 
 .adjust_DE_back_to_next_row
@@ -1090,6 +1112,27 @@ draw_pixel: MACRO
 	;[DE] now points to next row's pixels (of tile)
 	; we need [HL] (aka REG.I) to point to next row of sprite's pixels
 	inc	hl
+.check_horizontal_wrap
+	; if we wrapped around screen horizontally (while drawing ACROSS). Then we need to unwrap
+	; for the next row (as X will be reset). Since X += 8 always, we can check this and undo
+	ld	a, [DRAW_X_COORDINATE]
+	ifa	<=, 7,	jr .undo_horizontal_wrap
+.did_not_horizontal_wrap
+	; X is incremented for each pixel in row, so we remove 8 to re-adjust for new row
+	sub	8
+	ld	[DRAW_X_COORDINATE], a
+	jr	.check_DE_migration
+.undo_horizontal_wrap
+	; we get here if A <= 7 aka A was wrapped around after a pixel or more had already drawn
+	; we need to reset A, and reset [DE] from our address wrap-around
+	sub	8
+	add	64
+	ld	[DRAW_X_COORDINATE], a	; reset X coordinate to original value
+	push	hl
+	ld	hl, CHIP8_WIDTH_B * 8	; advance forward to unwrapped X address
+	add	hl, de
+	ldpair	de, hl	; [DE] is rewound from wrap-around
+	pop	hl
 .check_DE_migration
 	; OK but at this point, if [DE] jumps from bottom of tile to top of
 	; next tile, that's BAD. We need to detect that. We wanted, instead
@@ -1117,6 +1160,9 @@ draw_pixel: MACRO
 	ld	e, a
 	if_flag	c,	inc d	; MSB + 1 if necessary
 	; [DE] now points to top of tile below starting tile (if organized in a square grid of 16x16 tiles)
+	ld	a, e
+	and	%00001000	; get bit 4 of E (since it may have changed)
+	ld	[rDE_BIT4], a	; set new bit 4 of DE
 .wrap_around_screen_vertically
 	; check if new row is >= 32, in which case we need to adjust which tile we are drawing on AGAIN
 	ld	a, [DRAW_Y_COORDINATE]

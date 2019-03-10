@@ -13,7 +13,7 @@ SECTION "Vblank", ROM0[$0040]
 ; LCDC interrupts are LCD-specific interrupts (not including vblank) such as
 ; interrupting when the gameboy draws a specific horizontal line on-screen
 SECTION "LCDC", ROM0[$0048]
-	reti
+	jp	stretch_chip8_screen_height	; re-draw each line for x2 size
 
 ; Timer interrupt is triggered when the timer, rTIMA, ($FF05) overflows.
 ; rDIV, rTIMA, rTMA, rTAC all control the timer.
@@ -105,6 +105,8 @@ CHIP8_DISPLAY_TILES = CHIP8_CALL_STACK + $0060	; $CF00 -> $D100 (original before
 CHIP8_DISPLAY_TILES_END = CHIP8_DISPLAY_TILES + (CHIP8_WIDTH_B * CHIP8_HEIGHT_B * 8) ; $CF00 + $0200
 						; holds tiles / display buffer
 CHIP8_END = CHIP8_BEGIN + $1100 ; $D100
+doubleLineToggle EQU CHIP8_END + 1
+
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
 ; (used for all other tiles on the screen)
@@ -311,6 +313,8 @@ screen_setup:
 	ldh	[rSCX], a
 	ld	a, SCREEN_OFFSET_Y		; set (y,x) to (-40, -16)
 	ldh	[rSCY], a			; this'll center the display exactly
+	ld	a, %01010101
+	ld	[doubleLineToggle], a	; for hblank routine when stretching screen
 	ret
 	
 
@@ -433,29 +437,6 @@ vblank_copy_tiles_buffer_to_vram:
 			ld	[hl], b	; (2 cycles)
 		ENDR
 	ENDC
-
-
-.stretch_screen_vertically
-; if we repeat the same horizontal line (through rSCY changes) for each line in chip8 we can stretch it vertically
-	ld	hl, rLY
-	ld	b, 0 - SCREEN_OFFSET_Y	; (screen_offset_y is negative). Taking absolute value would be another alternative
-.loop_until_drawing_chip8_onscreen
-	ld	a, [hl]
-	cp	b
-	jr	nz, .loop_until_drawing_chip8_onscreen
-	; we get here if on line where chip8 graphics get drawn
-	ld	hl, rSCY
-	xor	a
-.double_each_line
-	REPT CHIP8_HEIGHT_B * 8 	; =32. repeat for each row of pixels
-		ld	[rIF], a	; clear interrupts
-		halt	; will resume on the next hblank interrupt
-		ld	[rIF], a	; clear hblank interrupt
-		dec	[hl]	; decrement SCY (screen Y position) so graphics line is repeated
-		halt	; resume on next hblank (next hblank doesn't stretch)
-	ENDR
-	ld	[hl], SCREEN_OFFSET_Y	; reset screen position for next screen refresh
-	
 .return_to_emulation
 ; restore SP
 	ld	hl, rSP
@@ -463,11 +444,44 @@ vblank_copy_tiles_buffer_to_vram:
 	ld	h, [hl]
 	ld	l, a ; HL holds SP
 	ld	sp, hl ; restore sp to original locatio
-	; now we disable h-blank
-	ldh	a, [rIE]
-	xor	IEF_LCDC ; disable LCD interrupts (aka HBLANK)
-	ldh	[rIE], a
 	popall
+	reti
+
+
+stretch_chip8_screen_height:
+; this gets called by LCDC interrupt routine. redraws each line of the chip8 screen, to double its size
+	push	af
+	ldh	a, [rLY]
+	;bug_message	"hblank @%A%"
+	ifa	<, 0 - SCREEN_OFFSET_Y,	jp .done  ; screen_offset_y is negative
+	;bug_message	"stretching screen. Line-Y @ %A%"
+	; we get here if we are actively drawing chip8 graphics. Double each line's height
+	ld	a, [doubleLineToggle]	; contains alternating bits aka %01010101
+	rrca	; every-other rotation sets carry flag
+	ld	[doubleLineToggle], a
+	ldh	a, [rSCY]
+	if_flag	nc,	jp .check_disable_lcdc_interrupt	; we don't shift screen
+	dec a	; if carry-flag set from rotation, decrement rSCY value
+	;bug_message	"decrement rSCY to %A%"
+	ldh	[rSCY], a
+.check_disable_lcdc_interrupt
+	ldh	a, [rLY]
+	; A holds current line. We want to have drawn 32 lines total since the start
+	; if we are 32 beyond screen offset then we know we should disable interrupt
+	ifa	>=, 64 - SCREEN_OFFSET_Y,	jr .disable_lcdc_interrupt	; remember screen_offset_y is negative
+	jr	.done	; done with this line only. More to come
+.disable_lcdc_interrupt
+	;bug_message	"disabling lcdc interrupt. rSCY = %A%"
+	ldh	a, [rIE]
+	xor	IEF_LCDC	; disable LCD interrupts (aka HBLANK)
+	ldh	[rIE], a
+.reset_variables
+	ld	a, SCREEN_OFFSET_Y
+	ldh	[rSCY], a	; reset screen position
+	ld	a, %01010101
+	ld	[doubleLineToggle], a	; reload double-line toggle with initial starting value
+.done
+	pop	af
 	reti
 
 

@@ -106,6 +106,7 @@ CHIP8_DISPLAY_TILES_END = CHIP8_DISPLAY_TILES + (CHIP8_WIDTH_B * CHIP8_HEIGHT_B 
 						; holds tiles / display buffer
 CHIP8_END = CHIP8_BEGIN + $1100 ; $D100
 doubleLineToggle EQU CHIP8_END + 1
+vblankFlag EQU doubleLineToggle + 1
 
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
@@ -1206,14 +1207,29 @@ draw_pixel: MACRO
 	; to catch the flickering of sprites.
 	; BUT ITS ALSO PROBABLY GOING TO INTRODUCE SPORADIC SPEEDUPS IN GAME.
 	;halt
-	ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
+	;ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
 
+
+halt_until_vblank:
+; essentially pause until screen has updated (visually)
+	push	hl
+	ld	hl, vblankFlag
+		;
+.loop
+	halt	; trying a new method of only halting when keyboard input requested
+		; this'll suck if the user does more than one action frame based on key input
+		;
+	srl	[hl]	; shifts bit 0 into CY. 0 into bit 7
+	jr	nc, .loop ; loop until vblankFlag is set to 1 by vblank handler
+	pop	hl
+	ret
 
 ; keycode instructions: check how VX relates to pressed key
 chip8_EXzz_decode:
 	bug_message	"EXzz keycodes"
 ; A holds $EX, HL points to $ZZ (either $9E or $A1)
+	;call	halt_until_vblank
 	and	$0F	; get [X] offset
 	add	LOW(REG.0)	; get register [X] address
 	ld	c, a	; c holds [X]
@@ -1476,6 +1492,8 @@ vblank_handle_timers:
 	ldh	[rNR14], a
 .nosound
 .done
+	ld	a, 1
+	ld	[vblankFlag], a	; set flag for other part of program running
 	pop	AF
 	reti
 

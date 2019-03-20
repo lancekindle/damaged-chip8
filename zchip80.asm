@@ -216,6 +216,7 @@ pop_pc_from_chip8_stack: MACRO
 	pop	hl	; HL is now restored PC
 	ENDM
 
+SECTION "pretty much everything", ROMX
 init_variables:
 .zero_registers
 	ld	c, LOW(REG.0)

@@ -45,6 +45,7 @@ SECTION "rom header", ROM0[$0104]
 	ROM_HEADER	"  Zchip80 emu  "
 
 include "dma.inc"
+include "ibmpc1.inc"
 include "vars.asm"
 include "syntax.inc"
 include "memory.asm"
@@ -263,7 +264,12 @@ copy_rom_to_ram:
 	ld	de, keypad_map
 	ld	bc, 8	; 8 bytes representing the 8 different key values for D,U,L,R, Start, Select, B,A
 	call	mem_Copy
-	ret
+	; first copy hex / gfx display data
+	ld	hl, hex_gfx_data
+	ld	bc, hex_gfx_data_end - hex_gfx_data
+	ld	de, CHIP8_FONT
+	bug_message	"copying hex gfx %HL% -> %DE%"
+	call	mem_Copy
 
 ; setup screen to point to CHIP8 tiles
 screen_setup:
@@ -292,6 +298,12 @@ screen_setup:
 		add	hl, bc	; advance to next row. HL now points to next row tile (onscreen) where
 				; the next chip8's row begins
 	ENDR
+.copy_fonts_from_AT:
+	ld	hl, characters_gfx_data
+	ld	de, _VRAM + "@" * 16	; 16 bytes per tile. We start copying "@" character to position
+					; in tiles equivalent to "@" offset in vram tiles
+	ld	bc, characters_gfx_data_end - characters_gfx_data
+	call mem_CopyMono
 .shade_blank_tile
 ; blank tile fills the rest of the screen. Set it to lightest shade so that chip8 screen is more visible
 	ld	hl, _VRAM + CHIP8_BLANK_TILE*16  ; address of blank tile
@@ -1608,6 +1620,12 @@ hex_gfx_data:
 	generate_0_F_gfx
 hex_gfx_data_end:
 
+characters_gfx_data:
+; generate "`" through "z" aka [`a-z]. No uppercase characters
+; ` is character 96, and it'll be copied to tile 96 in vram
+	chr_IBMPC1 3, 4
+; call mem_CopyMono to copy this font over
+characters_gfx_data_end:
 
 rom_pong:
   incbin	"brix.rom"

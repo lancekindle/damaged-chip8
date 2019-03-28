@@ -1,6 +1,6 @@
 include "gbhw.inc"	; wealth of gameboy hardware & addresses info
 include "debug.inc"
-	bug_verbose	1	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
+;	bug_verbose	 1	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
 
 ;-------------- INTERRUPT VECTORS ------------------------
 ; specific memory addresses are called when a hardware interrupt triggers
@@ -217,7 +217,6 @@ pop_pc_from_chip8_stack: MACRO
 	pop	hl	; HL is now restored PC
 	ENDM
 
-SECTION "pretty much everything", ROMX
 init_variables:
 .zero_registers
 	ld	c, LOW(REG.0)
@@ -244,23 +243,26 @@ init_variables:
 	store_rpair_from_hl	REG.SP	; set SP to CHIP8_CALL_STACK. 96 bytes to grow
 	ret
 
-copy_rom_to_ram:
-	; first copy hex / gfx display data
-	ld	hl, hex_gfx_data
-	ld	bc, hex_gfx_data_end - hex_gfx_data
-	ld	de, CHIP8_FONT
-	bug_message	"copying hex gfx %HL% -> %DE%"
-	call	mem_Copy
-	; eventually I'll make this a macro so I can specify which rom to copy
-	; for now we always copy pong rom
-	ld	hl, rom_pong
-	ld	bc, rom_pong.end - rom_pong
+ROM_COPY: MACRO
+; supply ROM_COPY with label of start of rom address. End of rom address should be local label ".end"
+; and the keypad_map right after that (8 bytes). This macro will copy the specified rom into ram.
+	jp	end_incbin\@
+\1
+	incbin "\1.ch8"
+.end
+	; keypad re-map values
+	; Down, Up, Left, Right, Start, Select, B, A
+	DB  \2, \3, \4, \5, \6, \7, \8, \9
+.end_keymap
+end_incbin\@
+	ld	hl, \1
+	ld	bc, \1.end - \1
 	ld	de, CHIP8_PC_BEGIN
 	bug_message	"copying rom %HL% -> %DE% (size %BC%)"
 	call	mem_Copy
 	bug_message	"... end @ %DE%"
 	; now we copy keypad_map
-	ld	hl, rom_pong.end	; keypad_map for rom is right after end of rom
+	ld	hl, \1.end	; keypad_map for rom is right after end of rom
 	ld	de, keypad_map
 	ld	bc, 8	; 8 bytes representing the 8 different key values for D,U,L,R, Start, Select, B,A
 	call	mem_Copy
@@ -270,6 +272,7 @@ copy_rom_to_ram:
 	ld	de, CHIP8_FONT
 	bug_message	"copying hex gfx %HL% -> %DE%"
 	call	mem_Copy
+ENDM
 
 ; setup screen to point to CHIP8 tiles
 screen_setup:
@@ -344,7 +347,24 @@ code_begins:
 	ld	[rSTAT], a	; enable hblank, when LCDC interrupt is enabled (during vblank we set it)
 	; hblank interrupt vector (top of rom) is just RETI. That's purposeful. We actually use the interrupt to resume from a halt
 	; during drawing operations.
-	call	copy_rom_to_ram
+	jp last_rom	; jump past all but the last rom. The last rom contains code to copy it to start the game
+	; blitz fails with vertical wrap;
+	; blitz expects horizontal wrap!!!
+	; blitz also seems to generally fail on level 2. Seems like the random number generator isn't very random
+SECTION "chip8 roms", ROM0
+	         ;keymap:	Down, Up, Left, Right, Start, Select, B, A
+	ROM_COPY rom_breakout,	-1,   -1, 4,    6,     -1,    -1,     -1,-1
+	ROM_COPY rom_brix,	-1,   -1, 4,    6,     -1,    -1,     -1,-1	; breakout clone, but with gaps in tiles
+	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1	; pac-man
+	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5	; space invaders. shoot & start game with A/B
+	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6	; test
+	ROM_COPY rom_blitz,	-1,   -1, -1,   -1,     -1,   -1,     5, 5	; airplane drop bombs on building with A/B
+	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8	; you have 15 missiles to shoot targets
+	ROM_COPY rom_syzygy,	6,    3,  7,    8,     -1,    11,     15,14	; snake. A/B to start w/ or w/o border. Start to show score at end
+last_rom:
+	ROM_COPY rom_tetris,	7,    4,  5,    6,     -1,    -1,     4, 7	; tetris, UP or B to rotate
 	ei
 	ld	hl, CHIP8_PC_BEGIN - 2
 	jp	chip8_00E0_disp_clear	; x2 increments HL & clears screen
@@ -352,6 +372,8 @@ code_begins:
 	halt	; halts cpu until interrupt triggers
 	nop
 	jp	.loop
+
+SECTION "CHIP8 emulatotion code", ROMX
 
 chip8_not_implemented:
 	bug_break	"function not implemented"
@@ -1194,6 +1216,7 @@ draw_pixel: MACRO
 .wrap_around_screen_vertically
 	; check if new row is >= 32, in which case we need to adjust which tile we are drawing on AGAIN
 	jp	.draw_sprite_row_loop	; THIS DISABLES VERTICAL WRAP. No games seem to seriously use this
+	; below vertical wrap is skipped; no games seem to use this
 	ld	a, [DRAW_Y_COORDINATE]
 	inc	a
 	ld	[DRAW_Y_COORDINATE], a
@@ -1242,7 +1265,7 @@ halt_until_vblank:
 chip8_EXzz_decode:
 	bug_message	"EXzz keycodes"
 ; A holds $EX, HL points to $ZZ (either $9E or $A1)
-	;call	halt_until_vblank
+	call	halt_until_vblank
 	and	$0F	; get [X] offset
 	add	LOW(REG.0)	; get register [X] address
 	ld	c, a	; c holds [X]
@@ -1626,13 +1649,6 @@ characters_gfx_data:
 	chr_IBMPC1 3, 4
 ; call mem_CopyMono to copy this font over
 characters_gfx_data_end:
-
-rom_pong:
-  incbin	"brix.rom"
-.end
-.keypad
-		; Down, Up, Left, Right, Start, Select, B, A
-	DB	  -1,   -1, 4,    6,     -1,    -1,     -1,-1
 
 rom_pong2:
 	DB	$00,$E0	; erase screen

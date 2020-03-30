@@ -347,31 +347,53 @@ code_begins:
 	ld	[rSTAT], a	; enable hblank, when LCDC interrupt is enabled (during vblank we set it)
 	; hblank interrupt vector (top of rom) is just RETI. That's purposeful. We actually use the interrupt to resume from a halt
 	; during drawing operations.
-	jp last_rom	; jump past all but the last rom. The last rom contains code to copy it to start the game
+	jp ROM.brix	; jump past all but one rom. The ROM.<rom_name> section contains copies the rom and starts the game
 	; blitz fails with vertical wrap;
 	; blitz expects horizontal wrap!!!
 	; blitz also seems to generally fail on level 2. Seems like the random number generator isn't very random
 SECTION "chip8 roms", ROM0
 	         ;keymap:	Down, Up, Left, Right, Start, Select, B, A
+ROM:
+.breakout:
 	ROM_COPY rom_breakout,	-1,   -1, 4,    6,     -1,    -1,     -1,-1
+	jp rom_start
+.brix:
 	ROM_COPY rom_brix,	-1,   -1, 4,    6,     -1,    -1,     -1,-1	; breakout clone, but with gaps in tiles
+	jp rom_start
+.blinky:
 	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1	; pac-man
+	jp rom_start
+.invaders:
 	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5	; space invaders. shoot & start game with A/B
+	jp rom_start
+.test_SCTEST
 	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+	jp rom_start
+.test_BC_test:
 	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+	jp rom_start
+.test_keypad:
 	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6	; test
+	jp rom_start
+.blitz:
 	ROM_COPY rom_blitz,	-1,   -1, -1,   -1,     -1,   -1,     5, 5	; airplane drop bombs on building with A/B
+	jp rom_start
+.missile:
 	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8	; you have 15 missiles to shoot targets
+	jp rom_start
+.syzygy:
 	ROM_COPY rom_syzygy,	6,    3,  7,    8,     -1,    11,     15,14	; snake. A/B to start w/ or w/o border. Start to show score at end
-last_rom:
+	jp rom_start
+.tetris:
 	ROM_COPY rom_tetris,	7,    4,  5,    6,     -1,    -1,     4, 7	; tetris, UP or B to rotate
+	jp rom_start
+
+rom_start:
+; where the game begins
 	ei
 	ld	hl, CHIP8_PC_BEGIN - 2
 	jp	chip8_00E0_disp_clear	; x2 increments HL & clears screen
-.loop
-	halt	; halts cpu until interrupt triggers
-	nop
-	jp	.loop
+
 
 SECTION "CHIP8 emulatotion code", ROMX
 

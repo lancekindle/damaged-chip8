@@ -85,6 +85,8 @@ include "lcd.asm"
 	var_HighRamByte rSP_LSB 
 	var_HighRamByte DRAW_Y_COORDINATE	; for detecting vertical wrap when drawing with DXYN
 	var_HighRamByte DRAW_X_COORDINATE	; for detecting horizontal wrap when drawing with DXYN
+	var_HighRamByte DRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
+	var_HighRamByte rKEYPAD_CHECKED
 	var_HighRamByte keypad_map	; per each bit, holds a byte 1-F representing 1-16 for a keypress.
 	; loaded when loading an new rom
 	REPT	7
@@ -122,6 +124,10 @@ SCREEN_OFFSET_Y = (64/2) - (144/2) ; Y offset = 32 - 72 = -40. Wow that's exactl
 
 ; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
 ; the screen to 128x64. It's still small, but at least it'll look better
+
+; DRAW_PAUSE_STYLE's
+DRAW_PAUSE_IF_KEYPAD_CHECK = 0
+DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION = 1
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -252,7 +258,7 @@ ROM_COPY: MACRO
 .end
 	; keypad re-map values
 	; Down, Up, Left, Right, Start, Select, B, A
-	DB  \2, \3, \4, \5, \6, \7, \8, \9
+	DB  \2, \3, \4, \5, \6, \7, \8, \9, \10
 .end_keymap
 end_incbin\@
 	ld	hl, \1
@@ -347,45 +353,45 @@ code_begins:
 	ld	[rSTAT], a	; enable hblank, when LCDC interrupt is enabled (during vblank we set it)
 	; hblank interrupt vector (top of rom) is just RETI. That's purposeful. We actually use the interrupt to resume from a halt
 	; during drawing operations.
-	jp ROM.brix	; jump past all but one rom. The ROM.<rom_name> section contains copies the rom and starts the game
+	jp ROM.breakout	; jump past all but one rom. The ROM.<rom_name> section contains copies the rom and starts the game
 	; blitz fails with vertical wrap;
 	; blitz expects horizontal wrap!!!
 	; blitz also seems to generally fail on level 2. Seems like the random number generator isn't very random
 SECTION "chip8 roms", ROM0
-	         ;keymap:	Down, Up, Left, Right, Start, Select, B, A
+	         ;keymap:	Down, Up, Left, Right, Start, Select, B, A,     DRAW_STYLE: controls gameplay speed
 ROM:
 .breakout:
-	ROM_COPY rom_breakout,	-1,   -1, 4,    6,     -1,    -1,     -1,-1
+	ROM_COPY rom_breakout,	-1,   -1, 4,    6,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.brix:
-	ROM_COPY rom_brix,	-1,   -1, 4,    6,     -1,    -1,     -1,-1	; breakout clone, but with gaps in tiles
+.brix:										; breakout clone, but with gaps in tiles
+	ROM_COPY rom_brix,	-1,   -1, 4,    6,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.blinky:
-	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1	; pac-man
+.blinky:									; pac-man
+	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.invaders:
-	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5	; space invaders. shoot & start game with A/B
+.invaders:									; space invaders. shoot & start game with A/B
+	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.test_SCTEST
-	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+.test_SCTEST:									; test
+	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.test_BC_test:
-	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1	; test
+.test_BC_test:									; test
+	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.test_keypad:
-	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6	; test
+.test_keypad:									; test
+	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.blitz:
-	ROM_COPY rom_blitz,	-1,   -1, -1,   -1,     -1,   -1,     5, 5	; airplane drop bombs on building with A/B
+.blitz:										; airplane drop bombs on building with A/B
+	ROM_COPY rom_blitz,	-1,   -1, -1,   -1,     -1,   -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.missile:
-	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8	; you have 15 missiles to shoot targets
+.missile:									; you have 15 missiles to shoot targets
+	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.syzygy:
-	ROM_COPY rom_syzygy,	6,    3,  7,    8,     -1,    11,     15,14	; snake. A/B to start w/ or w/o border. Start to show score at end
+.syzygy:									; snake. A/B to start w/ or w/o border. Start to show score at end
+	ROM_COPY rom_syzygy,	6,    3,  7,    8,     -1,    11,     15,14,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
-.tetris:
-	ROM_COPY rom_tetris,	7,    4,  5,    6,     -1,    -1,     4, 7	; tetris, UP or B to rotate
+.tetris:									; tetris, UP or B to rotate
+	ROM_COPY rom_tetris,	7,    4,  5,    6,     -1,    -1,     4, 7,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
 
 rom_start:
@@ -1254,6 +1260,11 @@ draw_pixel: MACRO
 	pop	hl	; restore sprite address
 	jp	.draw_sprite_row_loop
 .done_drawing_sprite
+	; now is time to determine if and how we should momentarily pause game to make it playable at normal speed
+	ldh	a, [rDRAW_PAUSE_STYLE]
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION, jp pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK,	jp pause_after_drawing_if_keypad_recently_checked
+.pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
 	ldh	a, [REG.F]
 	; it appears that drawing dictates the speed of the game. So not
 	; pausing "overspeeds" the game. But pausing after every draw causes
@@ -1264,8 +1275,22 @@ draw_pixel: MACRO
 	; so if I only pause on the update and draw time, it's less likely
 	; to catch the flickering of sprites.
 	; BUT ITS ALSO PROBABLY GOING TO INTRODUCE SPORADIC SPEEDUPS IN GAME.
-	;halt
-	;ifa	==, 0, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
+	;ifa	==, 0, call halt_until_vblank
+	;call	halt_until_vblank
+	; IDK why if I choose ifa ==0 OR 1, either way it prevents keyboard input. But blindly calling halt_until_vblank works.
+	; probably because we need to pause after both in order to make it work. But I say, you need to keep track of a new variable,
+	; keyboard input requtest
+	ifa	==, 0, jp .done
+	; we get here if REG.F = 0? (aka sprite drawn, no collision)
+.pause_after_drawing_if_keypad_recently_checked
+	ldh	a, [rKEYPAD_CHECKED]
+	ifa	==, 0, jp .done
+	; and if REG.KEYPAD_CHECKED = 1, aka this is the first draw after keypad has been checked
+	ld	a, 0
+	ldh	[rKEYPAD_CHECKED], a	; reset keypad variable
+	call	halt_until_vblank
+.done
+	;ifa	==, 1, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
 
 
@@ -1329,6 +1354,8 @@ get_key_press:
 	; start/select modify the keymappings such that
 	; the full 16 keys 0-F are represented when
 	; start or select or no modifier is held down
+	ld	a, 1
+	ldh	[rKEYPAD_CHECKED], a  ; this gets reset to at end of draw routine
 	jpad_GetKeys	; a huge macro
 	ret
 

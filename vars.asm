@@ -14,7 +14,10 @@ LowRamLimit     SET     LowRamBase + $1FF ; 512 bytes (variables) available
 MidRamBase      SET     LowRamLimit
 MidRamLimit     SET     MidRamBase + $0FFF ; 4096 bytes (var+space) available
 HighRamBase	SET	DMA_END_LOC	; add 12... (size of dma code)
-HighRamLimit	SET	HighRamBase + 41	; limit of 20 variables
+HighRamLimit	SET	HighRamBase + 43	; limit of 20? ish variables
+; HighRamLimit is just user-defined. If your code does not use the stack much
+; then it can be higher. But in general I would stick with limit of 20 vars
+
 ; OAM data is just a holding place where you can modify it. The OAM data
 ; will then get copied to OAM location in Video-Ram [$FE00 - $FEA0)
 

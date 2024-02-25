@@ -4,7 +4,7 @@
 ;   Licensed under GNU GPL v3 <http://www.gnu.org/licenses/>
 ;---------------------------------------------------------------------------
 	IF !DEF(IF_CONDITIONALS_INC)
-IF_CONDITIONALS_INC	SET	1
+IF_CONDITIONALS_INC	=	1
 
 ; if_conditionals.inc defines a set of string equates for use in your macros.
 ; use these right after an IF. RGBD's string expansion will take it from there.

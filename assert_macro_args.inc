@@ -4,7 +4,7 @@
 ;   Licensed under GNU GPL v3 <http://www.gnu.org/licenses/>
 ;---------------------------------------------------------------------------
 	IF !DEF(ASSERTIONS_INC)
-ASSERTIONS_INC	SET	1
+ASSERTIONS_INC	=	1
 
 include "if_conditionals.inc"
 

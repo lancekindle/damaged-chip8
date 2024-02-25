@@ -26,7 +26,7 @@
 
 
 	IF	!DEF(SYNTAX_INC)
-SYNTAX_INC	SET	1
+SYNTAX_INC	=	1
 
 include "macro_syntax.inc"
 include "assert_macro_args.inc"

@@ -85,13 +85,14 @@ include "lcd.asm"
 	var_HighRamByte rSP_LSB 
 	var_HighRamByte DRAW_Y_COORDINATE	; for detecting vertical wrap when drawing with DXYN
 	var_HighRamByte DRAW_X_COORDINATE	; for detecting horizontal wrap when drawing with DXYN
-	var_HighRamByte DRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
 	var_HighRamByte rKEYPAD_CHECKED
 	var_HighRamByte keypad_map	; per each bit, holds a byte 1-F representing 1-16 for a keypress.
 	; loaded when loading an new rom
 	REPT	7
 		var_HighRamByte keypad_map\@
 	ENDR
+	; rDRAW_PAUSE_STYLE needs to be placed right after keypad map, as it gets written at same time as keypad map
+	var_HighRamByte rDRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
 
 include "joypad.inc"
 CHIP8_WIDTH_B = 16
@@ -252,25 +253,29 @@ init_variables:
 ROM_COPY: MACRO
 ; supply ROM_COPY with label of start of rom address. End of rom address should be local label ".end"
 ; and the keypad_map right after that (8 bytes). This macro will copy the specified rom into ram.
-	jp	end_incbin\@
 \1
+	jp	end_incbin\@
+\@
+.begin
 	incbin "\1.ch8"
 .end
 	; keypad re-map values
 	; Down, Up, Left, Right, Start, Select, B, A
-	DB  \2, \3, \4, \5, \6, \7, \8, \9, \10
+	DB  \2, \3, \4, \5, \6, \7, \8, \9
+	SHIFT	; MACROS CAN ACCEPT UP TO 256 arguments, but you can only access \1 - \9. use SHIFT to get access to shift arguments
+	DB  \9  ; this is the DRAW_PAUSE_STYLE ARGUMENT
 .end_keymap
-end_incbin\@
-	ld	hl, \1
-	ld	bc, \1.end - \1
+end_incbin\@  	; is this why the rest of the ROM copies fail? Because this label doesn't start with a '.' ? I cannot prepend a . though, or it also breaks. But I can't seem to load any other game
+	ld	hl, \@.begin
+	ld	bc, \@.end - \@.begin
 	ld	de, CHIP8_PC_BEGIN
 	bug_message	"copying rom %HL% -> %DE% (size %BC%)"
 	call	mem_Copy
 	bug_message	"... end @ %DE%"
 	; now we copy keypad_map
-	ld	hl, \1.end	; keypad_map for rom is right after end of rom
+	ld	hl, \@.end	; keypad_map for rom is right after end of rom
 	ld	de, keypad_map
-	ld	bc, 8	; 8 bytes representing the 8 different key values for D,U,L,R, Start, Select, B,A
+	ld	bc, 9	; 8 bytes representing the 8 different key values for D,U,L,R, Start, Select, B,A, + 1 byte for DRAW_PAUSE_STYLE
 	call	mem_Copy
 	; first copy hex / gfx display data
 	ld	hl, hex_gfx_data

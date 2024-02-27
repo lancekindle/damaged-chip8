@@ -126,9 +126,11 @@ SCREEN_OFFSET_Y = (64/2) - (144/2) ; Y offset = 32 - 72 = -40. Wow that's exactl
 ; screen is 64 x 32. Since the gameboy is 160x144, we can double the size of
 ; the screen to 128x64. It's still small, but at least it'll look better
 
-; DRAW_PAUSE_STYLE's
+; DRAW_PAUSE_STYLE's (enum)
+DRAW_PAUSE_NONE = -1
 DRAW_PAUSE_IF_KEYPAD_CHECK = 0
 DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION = 1
+PAUSE_AFTER_KEYCHECK_NO_DRAW = 2
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -251,6 +253,8 @@ init_variables:
 	ret
 
 ROM_COPY: MACRO
+; argument 1 (first) is name of rom (no .ch8 extension, but it's presumed in the filesystem at same location as this asm file
+; arguments 2-9 are for keymappings. Argument 10 is how to slow-down the game so it's playable at a reasonable pace
 ; supply ROM_COPY with label of start of rom address. End of rom address should be local label ".end"
 ; and the keypad_map right after that (8 bytes). This macro will copy the specified rom into ram.
 \1
@@ -1267,8 +1271,9 @@ draw_pixel: MACRO
 .done_drawing_sprite
 	; now is time to determine if and how we should momentarily pause game to make it playable at normal speed
 	ldh	a, [rDRAW_PAUSE_STYLE]
-	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION, jp pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
-	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK,	jp pause_after_drawing_if_keypad_recently_checked
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION, jp .pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK,	jp .pause_after_drawing_if_keypad_recently_checked
+	ifa	==, DRAW_PAUSE_NONE, jp .done
 .pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
 	ldh	a, [REG.F]
 	; it appears that drawing dictates the speed of the game. So not
@@ -1294,6 +1299,7 @@ draw_pixel: MACRO
 	ld	a, 0
 	ldh	[rKEYPAD_CHECKED], a	; reset keypad variable
 	call	halt_until_vblank
+	jp	.done
 .done
 	;ifa	==, 1, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
@@ -1362,6 +1368,13 @@ get_key_press:
 	ld	a, 1
 	ldh	[rKEYPAD_CHECKED], a  ; this gets reset to at end of draw routine
 	jpad_GetKeys	; a huge macro
+	; reg a holds keypresses
+.potential_pause
+	push	af
+	ldh	a, [rDRAW_PAUSE_STYLE]
+	ifa	==, PAUSE_AFTER_KEYCHECK_NO_DRAW, call halt_until_vblank
+	pop	af
+.done
 	ret
 
 

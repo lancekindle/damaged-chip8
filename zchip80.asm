@@ -316,6 +316,22 @@ screen_setup:
 		add	hl, bc	; advance to next row. HL now points to next row tile (onscreen) where
 				; the next chip8's row begins
 	ENDR
+.draw_intro_text_on_screen1
+	jr .draw_text_onscreen
+.choose
+	DB	" press select to                "
+	DB	"  switch  games                 "
+.choose_end
+.draw_text_onscreen
+	ld	hl, _SCRN1
+	ld	de, .choose
+	ld	b, .choose_end - .choose
+.loop
+	ld	a, [de]
+	ldi	[hl], a		; draw letter onscreen
+	inc	de
+	dec	b
+	jr	nz, .loop
 .copy_fonts_from_AT:
 	ld	hl, characters_gfx_data
 	ld	de, _VRAM + "@" * 16	; 16 bytes per tile. We start copying "@" character to position
@@ -426,10 +442,16 @@ chip8_not_implemented:
 ; during vblank
 vblank_copy_tiles_buffer_to_vram:
 	pushall
-	bug_message	"vblank beginning with %CLKS2VBLANK% clocks left"
-;	jp	.old_vblank_copy_method
+.switch_to_SCRN1_choose_game_message
+	; shows game-select message OR nothing if we're actively in a game
+	ld	a, -10
+	ldh	[rSCY], a
+	ld	a, SCREEN_OFFSET_X + 4  ; center characters written
+	ldh	[rSCX], a
+	lcd_ToggleBGTileMap  ; if this were a call, we'd get visual artifacts. Timing is close
 
 .vblank_copy_routine
+	bug_message	"vblank beginning with %CLKS2VBLANK% clocks left"
 	; try copying bytes from GFX to VRAM using SP and popping. we only care about writing every other byte.
 	ld	[rSP], SP ; pushes the current Stack Pointer to rSP for safekeeping
 	ld	SP, CHIP8_DISPLAY_TILES; (64*32/8)*2 (2 bytes per pixel on 8 gameboy side) = 512 bytes
@@ -510,6 +532,17 @@ vblank_copy_tiles_buffer_to_vram:
 			ld	[hl], b	; (2 cycles)
 		ENDR
 	ENDC
+.reset_screen_position
+	ld	a, 10
+.delay_loop
+	; delay until end of line. Without this, you see a mid-line tear in background tile-swap
+	dec	a
+	jr	nz, .delay_loop
+	ld	a, SCREEN_OFFSET_Y
+	ldh	[rSCY], a
+	ld	a, SCREEN_OFFSET_X
+	ldh	[rSCX], a
+	lcd_ToggleBGTileMap
 .return_to_emulation
 ; restore SP
 	ld	hl, rSP

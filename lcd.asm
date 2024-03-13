@@ -97,6 +97,13 @@ lcd_ShowBackground:
 	ldh	[rLCDC], a
 	ret
 
+; toggle background tilemap
+lcd_ToggleBGTileMap: MACRO
+	ldh	a, [rLCDC]
+	xor	LCDCF_BG9C00
+	ldh	[rLCDC], a
+	ENDM
+
 ; modify sprite lcd options to enable sprites of 8bit size
 ; LCDCF_OBJ16 and LCDCF_OBJ8 control which objects get displayed
 ; LCDCF_OBJON / LCDCF_OBJOFF control if objects get displayed at all

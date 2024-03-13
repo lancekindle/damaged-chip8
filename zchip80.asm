@@ -42,7 +42,7 @@ SECTION "ROM_entry_point", ROM0[$0100]	; ROM is given control from boot here
 ;* macro calls (such as NINTENDO_LOGO) MUST be indented to run
 SECTION "rom header", ROM0[$0104]
 	NINTENDO_LOGO	; add nintendo logo. Required to run on real hardware
-	ROM_HEADER	"  Zchip80 emu  "
+	ROM_HEADER	"chip8  emulator"
 
 include "dma.inc"
 include "ibmpc1.inc"
@@ -79,7 +79,6 @@ include "lcd.asm"
 	var_HighRamByte	jpad_rKeys	; holds last-pressed keys
 	var_HighRamByte jpad_rActiveKey	; holds the one chosen active key
 	var_HighRamByte	jpad_rHexEncoded
-	var_HighRamByte	vram_halfcopy_toggle	; 0/1 for which half of vram to copy
 	; this variable (rSP) is not part of chip8's registers
 	var_HighRamByte rSP	; holds backup of GameBoy's SP during tile copying operation.
 	var_HighRamByte rSP_LSB 
@@ -109,8 +108,10 @@ CHIP8_DISPLAY_TILES = CHIP8_CALL_STACK + $0060	; $CF00 -> $D100 (original before
 CHIP8_DISPLAY_TILES_END = CHIP8_DISPLAY_TILES + (CHIP8_WIDTH_B * CHIP8_HEIGHT_B * 8) ; $CF00 + $0200
 						; holds tiles / display buffer
 CHIP8_END = CHIP8_BEGIN + $1100 ; $D100
+; here is where we (essentially) define variables in LowRamByte way!
 doubleLineToggle EQU CHIP8_END + 1
 vblankFlag EQU doubleLineToggle + 1
+
 
 ; set to 1 tile after all chip8-tiles. 64 (8 tiles wide) x 32 (4 tiles tall)
 ; means that the chip8 needs 32 tiles (0-31). So Tile 32 will be blank
@@ -130,7 +131,7 @@ SCREEN_OFFSET_Y = (64/2) - (144/2) ; Y offset = 32 - 72 = -40. Wow that's exactl
 DRAW_PAUSE_NONE = -1
 DRAW_PAUSE_IF_KEYPAD_CHECK = 0
 DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION = 1
-PAUSE_AFTER_KEYCHECK_NO_DRAW = 2
+PAUSE_IMMEDIATELY_AFTER_KEYCHECK = 2
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -245,7 +246,6 @@ init_variables:
 	ld	[jpad_rHexEncoded], a
 	ld	[TIMER_DELAY], a
 	ld	[TIMER_SOUND], a
-	ld	[vram_halfcopy_toggle], a
 	ld	a, -1
 	ld	[KEY.ACTIVE], a	; active key needs to be -1 (aka no active key)
 	ld	hl, CHIP8_CALL_STACK
@@ -1372,7 +1372,7 @@ get_key_press:
 .potential_pause
 	push	af
 	ldh	a, [rDRAW_PAUSE_STYLE]
-	ifa	==, PAUSE_AFTER_KEYCHECK_NO_DRAW, call halt_until_vblank
+	ifa	==, PAUSE_IMMEDIATELY_AFTER_KEYCHECK, call halt_until_vblank
 	pop	af
 .done
 	ret

@@ -252,12 +252,18 @@ init_variables:
 	store_rpair_from_hl	REG.SP	; set SP to CHIP8_CALL_STACK. 96 bytes to grow
 	ret
 
+
 ROM_COPY: MACRO
 ; argument 1 (first) is name of rom (no .ch8 extension, but it's presumed in the filesystem at same location as this asm file
 ; arguments 2-9 are for keymappings. Argument 10 is how to slow-down the game so it's playable at a reasonable pace
 ; supply ROM_COPY with label of start of rom address. End of rom address should be local label ".end"
 ; and the keypad_map right after that (8 bytes). This macro will copy the specified rom into ram.
-\1
+
+\1	; the name of the rom (rom_xyz) is the label, starts off by loading the ROM!
+	bug_message	"loading \1"
+	di	; we enable interrupts at end of ROM_COPY
+	; we get here initially from the Rom_Starter_Index call... which puts the SP on the stack
+	; Now commence with loading rom
 	jp	end_incbin\@
 \@
 .begin
@@ -470,7 +476,6 @@ chip8_not_implemented:
 .pop_pc	; for triggering a bug_break when PC has been pushed to stack
 	pop	hl	; pop PC into hl
 	jp	chip8_not_implemented
-
 
 ; chip8's vram is a memory address labelled "display refresh" on the wiki
 ; it exists in the 4k memory reserved for the CHIP8 game, top of the ram

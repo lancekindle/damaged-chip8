@@ -92,7 +92,7 @@ include "lcd.asm"
 	ENDR
 	; rDRAW_PAUSE_STYLE needs to be placed right after keypad map, as it gets written at same time as keypad map
 	var_HighRamByte rDRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
-	var_HighRamByte	rOpcodeCount
+	var_HighRamByte	rOpcodeCountSinceKeyCheck
 
 include "joypad.inc"
 CHIP8_WIDTH_B = 16
@@ -136,7 +136,6 @@ PAUSE_IMMEDIATELY_AFTER_KEYCHECK = 2
 DRAW_PAUSE_ALWAYS = 3	; pause after every draw
 DRAW_PAUSE_AFTER_DRAW = 4	; pause after every draw that didn't collide with previous pixel
 DRAW_PAUSE_AFTER_ERASE = 5	; pause draw after draw that erased at least one pixel.
-DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK = 6	; Use for tests that don't ever look at user input
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -250,7 +249,7 @@ init_variables:
 	ld	[jpad_rKeys], a
 	ld	[jpad_rHexEncoded], a
 	ldh	[rKEYPAD_CHECKED], a	; reset keypad variable
-	ldh	[rOpcodeCount], a	; reset keypad variable
+	ldh	[rOpcodeCountSinceKeyCheck], a	; reset keypad variable
 	ld	[TIMER_DELAY], a
 	ld	[TIMER_SOUND], a
 	ld	a, -1
@@ -446,10 +445,10 @@ ROM:
 	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
 .test_SCTEST									; test
-	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK
+	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE
 	jp rom_start
 .test_BC_test									; test
-	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK
+	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE
 	jp rom_start
 .test_keypad									; test
 	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6,	DRAW_PAUSE_IF_KEYPAD_CHECK
@@ -633,17 +632,25 @@ chip8:
 .pop_pc
 	pop	hl	; fxn calls this if they pushed PC before jumping here
 .decode_opcode
-.potential_game_switch		; some test "games" never check input. This is only way to switch games
-	ldh	a, [rDRAW_PAUSE_STYLE]
-	ifa	!=, DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK, jp .continue_decode_opcode
-	; Delay keycheck when rom first starts, by only checking keypad if current instruction is 250-255
-	ldh	a, [rOpcodeCount]
+.potential_game_switch		; some test "games" never check input. Or lock up after game over. This is only way to switch games
+	; if 256 instructions pass without a keypad check, force a keypad check, and continuously checkpad until chip8 checks keypad
+	bug_message	"checking for force_keypad"
+	ldh	a, [rOpcodeCountSinceKeyCheck]
 	inc	a
-	ldh	[rOpcodeCount], a
-	ifa	<=, 250, jp .continue_decode_opcode
-	pushall
+	ldh	[rOpcodeCountSinceKeyCheck], a
+	if_flag	nz, jp .continue_decode_opcode
+	push	hl
+	ldh	a, [rKEYPAD_CHECKED]	; backup state of keypad check
+	push	af
 	call	get_key_press	; this forces a game-switch if select is pressed
-	popall
+	; we get here if game did NOT switch -- so pretend you didn't look at keypad
+	ld	a, 255
+	ldh	[rOpcodeCountSinceKeyCheck], a	; force every opcode after 256 to check keypress! (until it gets checked by chip8)
+						; Yes, checking keypad every opcode does slow down the load on pacman, and test roms
+						; but it's worth it for the instant game switch on all other games
+	pop	af
+	ldh	[rKEYPAD_CHECKED], a	; restore state of keypad check before we messed with it
+	pop	hl
 .continue_decode_opcode
 ; assume that [HL] points to next ROM location. AKA HL is the chip8's PC.
 ; Bytes are stored big-endian so we load MSB first, and compare to determine
@@ -1453,6 +1460,8 @@ get_key_press:
 	; start/select modify the keymappings such that
 	; the full 16 keys 0-F are represented when
 	; start or select or no modifier is held down
+	ld	a, 0
+	ldh	[rOpcodeCountSinceKeyCheck], a	; used to help reset game that no longer listens to keypresses
 	ld	a, 1
 	ldh	[rKEYPAD_CHECKED], a  ; this gets reset to at end of draw routine
 	jpad_GetKeys	; a huge macro

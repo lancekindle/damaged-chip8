@@ -477,19 +477,13 @@ chip8_not_implemented:
 	pop	hl	; pop PC into hl
 	jp	chip8_not_implemented
 
+
 ; chip8's vram is a memory address labelled "display refresh" on the wiki
 ; it exists in the 4k memory reserved for the CHIP8 game, top of the ram
 ; portion. We copy those tiles to their appropriate VRAM locations (tiles 0-31)
 ; during vblank
 vblank_copy_tiles_buffer_to_vram:
 	pushall
-.switch_to_SCRN1_choose_game_message
-	; shows game-select message OR nothing if we're actively in a game
-	ld	a, -10
-	ldh	[rSCY], a
-	ld	a, SCREEN_OFFSET_X + 4  ; center characters written
-	ldh	[rSCX], a
-	lcd_ToggleBGTileMap  ; if this were a call, we'd get visual artifacts. Timing is close
 
 .vblank_copy_routine
 	bug_message	"vblank beginning with %CLKS2VBLANK% clocks left"
@@ -573,17 +567,6 @@ vblank_copy_tiles_buffer_to_vram:
 			ld	[hl], b	; (2 cycles)
 		ENDR
 	ENDC
-.reset_screen_position
-	ld	a, 10
-.delay_loop
-	; delay until end of line. Without this, you see a mid-line tear in background tile-swap
-	dec	a
-	jr	nz, .delay_loop
-	ld	a, SCREEN_OFFSET_Y
-	ldh	[rSCY], a
-	ld	a, SCREEN_OFFSET_X
-	ldh	[rSCX], a
-	lcd_ToggleBGTileMap
 .return_to_emulation
 ; restore SP
 	ld	hl, rSP

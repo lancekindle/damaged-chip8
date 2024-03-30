@@ -132,6 +132,9 @@ DRAW_PAUSE_NONE = -1
 DRAW_PAUSE_IF_KEYPAD_CHECK = 0
 DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION = 1
 PAUSE_IMMEDIATELY_AFTER_KEYCHECK = 2
+DRAW_PAUSE_ALWAYS = 3	; pause after every draw
+DRAW_PAUSE_AFTER_DRAW = 4	; pause after every draw that didn't collide with previous pixel
+DRAW_PAUSE_AFTER_ERASE = 5	; pause draw after draw that erased at least one pixel.
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -433,7 +436,7 @@ ROM:
 	ROM_COPY rom_brix,	-1,   -1, 4,    6,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
 .blinky										; pac-man
-	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
+	ROM_COPY rom_blinky,	6,    3,  7,    8,     -1,    -1,     -1,-1,	DRAW_PAUSE_AFTER_ERASE	; not sure why this works so well
 	jp rom_start
 .invaders									; space invaders. shoot & start game with A/B
 	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
@@ -451,7 +454,7 @@ ROM:
 	ROM_COPY rom_blitz,	-1,   -1, -1,   -1,     -1,   -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
 .missile									; you have 15 missiles to shoot targets
-	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8,	DRAW_PAUSE_IF_KEYPAD_CHECK
+	ROM_COPY rom_missile,	-1,   -1, -1,   -1,    -1,    -1,     8, 8,	DRAW_PAUSE_AFTER_DRAW
 	jp rom_start
 .syzygy										; snake. A/B to start w/ or w/o border. Start to show score at end
 	ROM_COPY rom_syzygy,	6,    3,  7,    8,     -1,    11,     15,14,	DRAW_PAUSE_IF_KEYPAD_CHECK  ;DRAW_PAUSE_IF_KEYPAD_CHECK
@@ -1328,9 +1331,20 @@ draw_pixel: MACRO
 .done_drawing_sprite
 	; now is time to determine if and how we should momentarily pause game to make it playable at normal speed
 	ldh	a, [rDRAW_PAUSE_STYLE]
-	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION, jp .pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
-	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK,	jp .pause_after_drawing_if_keypad_recently_checked
 	ifa	==, DRAW_PAUSE_NONE, jp .done
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK,	jp .pause_after_drawing_if_keypad_recently_checked
+	ifa	==, DRAW_PAUSE_IF_KEYPAD_CHECK_AND_NO_COLLISION, jp .pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
+	ifa	==, DRAW_PAUSE_AFTER_DRAW, jp .pause_after_drawing_if_no_collision
+	ifa	==, DRAW_PAUSE_AFTER_ERASE, jp .pause_after_drawing_if_collision
+	ifa	==, DRAW_PAUSE_ALWAYS, jp .pause
+.pause_after_drawing_if_no_collision
+	ldh	a, [REG.F]
+	ifa	==, 1, jp .done
+	jp	.pause
+.pause_after_drawing_if_collision
+	ldh	a, [REG.F]
+	ifa	==, 0, jp .done
+	jp	.pause
 .pause_after_drawing_if_keypad_recently_checked_and_no_sprite_collision
 	ldh	a, [REG.F]
 	; it appears that drawing dictates the speed of the game. So not
@@ -1355,8 +1369,9 @@ draw_pixel: MACRO
 	; and if REG.KEYPAD_CHECKED = 1, aka this is the first draw after keypad has been checked
 	ld	a, 0
 	ldh	[rKEYPAD_CHECKED], a	; reset keypad variable
+	jp	.pause
+.pause
 	call	halt_until_vblank
-	jp	.done
 .done
 	;ifa	==, 1, halt ; WARNING CRITICAL: THIS VASTLY SLOWS DOWN THE GAME
 	jp	chip8.pop_pc
@@ -1434,7 +1449,7 @@ get_key_press:
 	; D, U, L, R,     Start,Select,   B, A
 	; So Down == 0, Up == 1, etc..., B == 6, A == 7
 	ifa	!=, 5, jr .potential_pause
-.switch_game
+.switch_game	; 5 aka Select-key, is used to switch games
 	pop	af	; discard active hex-key, we are switching games
 	ld	a, -1
 	ldh	[jpad_rActiveKey], a	; reset active key so that select isn't "held"

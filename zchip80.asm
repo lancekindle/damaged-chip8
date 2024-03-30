@@ -92,6 +92,7 @@ include "lcd.asm"
 	ENDR
 	; rDRAW_PAUSE_STYLE needs to be placed right after keypad map, as it gets written at same time as keypad map
 	var_HighRamByte rDRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
+	var_HighRamByte	rOpcodeCount
 
 include "joypad.inc"
 CHIP8_WIDTH_B = 16
@@ -135,6 +136,7 @@ PAUSE_IMMEDIATELY_AFTER_KEYCHECK = 2
 DRAW_PAUSE_ALWAYS = 3	; pause after every draw
 DRAW_PAUSE_AFTER_DRAW = 4	; pause after every draw that didn't collide with previous pixel
 DRAW_PAUSE_AFTER_ERASE = 5	; pause draw after draw that erased at least one pixel.
+DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK = 6	; Use for tests that don't ever look at user input
 
 
 ; In a nutshell there are two registers: the “sound timer” and “delay timer”.
@@ -247,6 +249,8 @@ init_variables:
 	xor	a
 	ld	[jpad_rKeys], a
 	ld	[jpad_rHexEncoded], a
+	ldh	[rKEYPAD_CHECKED], a	; reset keypad variable
+	ldh	[rOpcodeCount], a	; reset keypad variable
 	ld	[TIMER_DELAY], a
 	ld	[TIMER_SOUND], a
 	ld	a, -1
@@ -442,10 +446,10 @@ ROM:
 	ROM_COPY rom_invaders,	-1,   -1, 4,    6,     -1,    -1,     5, 5,	DRAW_PAUSE_IF_KEYPAD_CHECK
 	jp rom_start
 .test_SCTEST									; test
-	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
+	ROM_COPY test_SCTEST,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK
 	jp rom_start
 .test_BC_test									; test
-	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_IF_KEYPAD_CHECK
+	ROM_COPY test_BC_test,	-1,   -1, -1,  -1,     -1,    -1,     -1,-1,	DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK
 	jp rom_start
 .test_keypad									; test
 	ROM_COPY test_keypad,	0,    1,  2,    3,     -1,    -1,     5, 6,	DRAW_PAUSE_IF_KEYPAD_CHECK
@@ -629,6 +633,18 @@ chip8:
 .pop_pc
 	pop	hl	; fxn calls this if they pushed PC before jumping here
 .decode_opcode
+.potential_game_switch		; some test "games" never check input. This is only way to switch games
+	ldh	a, [rDRAW_PAUSE_STYLE]
+	ifa	!=, DRAW_PAUSE_NONE_FORCE_KEYPAD_CHECK, jp .continue_decode_opcode
+	; Delay keycheck when rom first starts, by only checking keypad if current instruction is 250-255
+	ldh	a, [rOpcodeCount]
+	inc	a
+	ldh	[rOpcodeCount], a
+	ifa	<=, 250, jp .continue_decode_opcode
+	pushall
+	call	get_key_press	; this forces a game-switch if select is pressed
+	popall
+.continue_decode_opcode
 ; assume that [HL] points to next ROM location. AKA HL is the chip8's PC.
 ; Bytes are stored big-endian so we load MSB first, and compare to determine
 ; which instruction to run

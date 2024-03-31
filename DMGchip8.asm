@@ -273,7 +273,7 @@ ROM_COPY: MACRO
 	jp	end_incbin\@
 \@
 .begin
-	incbin "\1.ch8"
+	incbin "roms/\1.ch8"
 .end
 	; keypad re-map values
 	; Down, Up, Left, Right, Start, Select, B, A

@@ -44,7 +44,7 @@ rev_Check_memory_asm: MACRO
         ENDC
         ENDM
 
-        INCLUDE "gbhw.inc"
+        INCLUDE "src/gbhw.inc"
 
 ; Make sure include files are useable revisions.
 

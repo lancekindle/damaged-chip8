@@ -1,6 +1,6 @@
 ; contains a number of defines and code to be used
 
-include "gbhw.inc"
+include "src/gbhw.inc"
 
 	; prevent re-loading lcd.asm if it's already loaded
 	IF	!DEF(LCD_ASM)

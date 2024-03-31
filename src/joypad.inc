@@ -1,7 +1,7 @@
 ; these are methods for joypads taken from gameboy examples
 
-include "gbhw.inc"
-include "syntax.inc"
+include "src/gbhw.inc"
+include "src/syntax.inc"
 
 	IF  !DEF(JOYPAD_INC)
 JOYPAD_INC  SET     1

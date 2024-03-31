@@ -15,7 +15,7 @@ dma_Copy2HRAM: MACRO
 ; generates no code in the ROM when included.
 ; This is important because DMACODELOC is referenced before we can load the
 ; actual dmacode. So we must use only macros & defines in this file
-include "memory.asm"
+include "src/memory.asm"
 	jr	.dmaend\@
 .dmacode\@
 	push	af

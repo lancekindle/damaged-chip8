@@ -1,5 +1,5 @@
-include "gbhw.inc"	; wealth of gameboy hardware & addresses info
-include "debug.inc"
+include "src/gbhw.inc"	; wealth of gameboy hardware & addresses info
+include "src/debug.inc"
 ;	bug_verbose	 1	; 0 = No output. 1 = msgs & errors. 2 = errors only. 3 = msgs also break
 
 ;-------------- INTERRUPT VECTORS ------------------------
@@ -44,12 +44,12 @@ SECTION "rom header", ROM0[$0104]
 	NINTENDO_LOGO	; add nintendo logo. Required to run on real hardware
 	ROM_HEADER	"chip8  emulator"
 
-include "dma.inc"
-include "ibmpc1.inc"
-include "vars.asm"
-include "syntax.inc"
-include "memory.asm"
-include "lcd.asm"
+include "src/dma.inc"
+include "src/ibmpc1.inc"
+include "src/vars.asm"
+include "src/syntax.inc"
+include "src/memory.asm"
+include "src/lcd.asm"
 
 	var_HighRamByte	TIMER_DELAY
 	var_HighRamByte	TIMER_SOUND
@@ -94,7 +94,7 @@ include "lcd.asm"
 	var_HighRamByte rDRAW_PAUSE_STYLE	; for determining how/when to pause after drawing (controls gameplay speed)
 	var_HighRamByte	rOpcodeCountSinceKeyCheck
 
-include "joypad.inc"
+include "src/joypad.inc"
 CHIP8_WIDTH_B = 16
 CHIP8_HEIGHT_B = 4
 

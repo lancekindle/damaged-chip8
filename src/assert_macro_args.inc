@@ -6,7 +6,7 @@
 	IF !DEF(ASSERTIONS_INC)
 ASSERTIONS_INC	=	1
 
-include "if_conditionals.inc"
+include "src/if_conditionals.inc"
 
 ASSERT_IS_REGISTER: MACRO
 ; assert that passed argument(s) is/are a single register. Fails if the

@@ -8,8 +8,8 @@ MACRO_SYNTAX_INC = 1
 
 ; Contains macros designed mostly for use by other macros
 
-include "assert_macro_args.inc"
-include "if_conditionals.inc"
+include "src/assert_macro_args.inc"
+include "src/if_conditionals.inc"
 
 
 ; first of all, let me apologize that this mess below is nearly the first thing

@@ -28,9 +28,9 @@
 	IF	!DEF(SYNTAX_INC)
 SYNTAX_INC	=	1
 
-include "macro_syntax.inc"
-include "assert_macro_args.inc"
-include "if_conditionals.inc"
+include "src/macro_syntax.inc"
+include "src/assert_macro_args.inc"
+include "src/if_conditionals.inc"
 
 
 lda: MACRO

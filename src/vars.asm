@@ -5,8 +5,8 @@
 	IF !DEF(VARS_ASM)
 VARS_ASM	SET     1
 
-include "gbhw.inc"
-include "dma.inc"
+include "src/gbhw.inc"
+include "src/dma.inc"
 
 LowRamBase      SET     _RAM + $A0      ; available ram after OAM data
 ; (OAM data is the $A0 added to _RAM)

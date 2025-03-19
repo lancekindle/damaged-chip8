@@ -37,3 +37,19 @@ are welcome as well)
 Also check out [GB-8](https://github.com/Hacktix/GB-8),
 another chip8 interpreter for the gameboy.
 Sometime I'd like to compare notes :)
+
+----------------------------
+rom authors:
+- breakout:     ???
+- tetris:       ???
+- ghostEscape:  [TomRintjema](https://github.com/TomRintjema/)
+- syzygy:       ???
+- invaders:     ???
+- blinky:       ???
+- missile:      ???
+- blitz:        ???
+- brix:         ???
+- test_keypad:  ???
+- test_BC_test: ???
+- test_SCTEST:  ???
+
